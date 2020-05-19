@@ -3,11 +3,11 @@
 
 /*
     @params
-    stream is codeid ptr to 8080 asm code
+    stream is valid ptr to 8080 asm code
     pc is offset into code
 
     @return
-    # of byte in op
+    # of bytes in op
 */
 int Disassemble8080(unsigned char* stream, int pc) {
     unsigned char *code = &stream[pc];
