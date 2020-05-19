@@ -13,27 +13,24 @@ int Disassemble8080(unsigned char* stream, int pc) {
     unsigned char *code = &stream[pc];
     unsigned char val = *code;
     int opSize = 1;
-    printf("%04x", pc);
+    printf("%04x    ", pc);
+
     switch (val) {
         case 0x00: printf("NOP"); break;
-        // it's in little endian!!1
-        // begin ops for B
-        case 0x01: printf("LXI  B, %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0x02: printf("STAX B"); break;
-        case 0x03: printf("INX  B"); break;
-        case 0x04: printf("INR  B"); break;
-        case 0x05: printf("DCR  B"); break;
-        case 0x06: printf("MVI  B, %02x", code[1]); opSize=2; break;
-        case 0x07: printf("RLC"); break;
-        case 0x09: printf("DAD  B"); break;
-        case 0x0a: printf("LDAX B"); break;
-        case 0x0b: printf("DCX  B"); break;
-        case 0x0c: printf("INR  C"); break;
+        case 0x01: printf("LXI  B, %02x%02x", code[2], code[1]); opSize=3; break; // copy values[1],[2] to regs C,B
+        case 0x02: printf("STAX B"); break; // moves 8 bits from A into (BC)
+        case 0x03: printf("INX  B"); break; // inc BC by 1
+        case 0x04: printf("INR  B"); break; // inc B by 1
+        case 0x05: printf("DCR  B"); break; // dec B by 1
+        case 0x06: printf("MVI  B, %02x", code[1]); opSize=2; break; // B <- value[1]
+        case 0x07: printf("RLC"); break; // A << 1, bit 0 becomes carry bit, get previous bit 7 
+        case 0x09: printf("DAD  B"); break; // adds BC to HL (mem?)
+        case 0x0a: printf("LDAX B"); break; // move BC to A
+        case 0x0b: printf("DCX  B"); break; // dec BC
+        case 0x0c: printf("INR  C"); break; 
         case 0x0d: printf("DCR  C"); break;
         case 0x0e: printf("MVI  C, %02x", code[1]); opSize=2; break;
         case 0x0f: printf("RRC"); break;
-        // can you mask val and nest another switch to make it.... not awful....
-        // begin D ops
         case 0x11: printf("LXI  D, %02x%02x"); opSize=3; break;
         case 0x12: printf("STAX D"); break;
         case 0x13: printf("INX  D"); break;
@@ -266,7 +263,7 @@ int Disassemble8080(unsigned char* stream, int pc) {
         default: break;
     }
     // could absolutely refactor this
-    printf('\n');
+    printf("\n");
     return opSize;
 }
 
