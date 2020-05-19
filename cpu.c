@@ -160,17 +160,14 @@ void EmulateCPU(CPUState* state) {
         case 0x7d: printf("MOV A,L"); break;
         case 0x7e: printf("MOV A,M"); break;
         case 0x7f: printf("MOV A,A"); break;
-        case 0x80: {
-
-            break;
-        }
-        case 0x81: printf("ADD C"); break;
-        case 0x82: printf("ADD D"); break;
-        case 0x83: printf("ADD E"); break;
-        case 0x84: printf("ADD H"); break;
-        case 0x85: printf("ADD L"); break;
-        case 0x86: printf("ADD M"); break;
-        case 0x87: printf("ADD A"); break;
+        case 0x80: addOp(&state->b, state); break;
+        case 0x81: addOp(&state->c, state); break;
+        case 0x82: addOp(&state->d, state); break;
+        case 0x83: addOp(&state->e, state); break;
+        case 0x84: addOp(&state->h, state); break;
+        case 0x85: addOp(&state->l, state); break;
+        case 0x86: addOp(NULL, state); break;
+        case 0x87: addOp(&state->a, state); break;
         case 0x88: printf("ADC B"); break;
         case 0x89: printf("ADD C"); break;
         case 0x8a: printf("ADD D"); break;
@@ -292,14 +289,33 @@ void EmulateCPU(CPUState* state) {
     state->pc += 1;
 }
 
-// adds register value to accumulator, if reg = NULL then it's from memory
+// adds register value to accumulator, if reg = NULL then it's from memory (HL)
+// should this return the answer instead and CPU handles store to mem?? thinking about coupling b/c of state
 void addOp(uint8_t* reg, CPUState* state) {
+    uint16_t answer = (uint16_t) state->a;
+    printf("initial a val: %d", answer);
+
     if (reg == NULL) {
-        uint8_t m = state->h >> 8 | state->l;
-        uint16_t answer = (uint16_t) state->a + (uint16_t) m;
-        state->flags.z = ((answer & 0xff) == 0); // can i just do (answer)
-        state->flags.s = ((answer & 0x80) != 0);
-        state->flags.c = (answer > 0xff);
-        state->a = state->mem[m];
+        uint16_t* m = state->h >> 8 | state->l;
+        printf("m addr: %d, m val: %d", m, *m);
+        answer += *m;
+        printf("answer: %d", answer);
+        free(m); // i think this is ok LOL
+    } else {
+        printf("m addr: %d, m val: %d", reg, *reg);
+        answer += (u_int16_t) *reg;
+        printf("answer: %d", answer);
     }
+
+    state->flags.z = ((answer & 0xff) == 0); // can i just do (answer & 0xff)
+    state->flags.s = ((answer & 0x80) != 0);
+    state->flags.c = (answer > 0xff);
+    state->flags.p = Parity(answer & 0xff);
+    state->a = answer & 0xff;
+
+    printf("reg a val: %d", state->a);
+}
+
+void adcOp(uint8_t *reg, CPUState* state) {
+    
 }
