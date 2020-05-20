@@ -3,13 +3,11 @@
 
 typedef struct FlagRegister {
     uint8_t c:1;        // carry flag 
-    uint8_t pad1:1;     // always 1, unused
     uint8_t p:1;        // parity flag 
-    uint8_t pad2:1;     // always 0, unused
     uint8_t ac:1;       // auxillary carry flag
-    uint8_t pad3:1;     // always 0, unused
     uint8_t z:1;        // zero flag
     uint8_t s:1;        // sign flag
+    uint8_t pad:3;
 } FlagRegister;
 
 typedef struct CPUState {
@@ -28,8 +26,8 @@ typedef struct CPUState {
 } CPUState;
 
 void UnimplementedInstruction(CPUState* state) {
-    state->pc = state->pc - 1;
-    printf("Error: Unimplemented instrcution.\n");
+    state->pc--;
+    printf("Error: Unimplemented instruction.\n");
     exit(1);
 }
 
@@ -39,62 +37,143 @@ void EmulateCPU(CPUState* state) {
     switch (opcode0) {
         case 0x00: printf("NOP"); break;
         case 0x01: {
-            break;
+            state->b = opcode[1];
+            state->c = opcode[2];
+            state->pc += 2;
         }
-        case 0x02: break; // A into (BC)
-        case 0x03: break; // inc BC by 1
-        case 0x04: break; // inc B by 1
-        case 0x05: break; // dec B by 1
-        case 0x06: printf("MVI  B, %02x", code[1]); opSize=2; break; // B <- value[1]
-        case 0x07: printf("RLC"); break; // A << 1, bit 0 becomes carry bit, gets previous read's bit 7 
-        case 0x09: printf("DAD  B"); break; // adds BC to HL (mem?)
-        case 0x0a: printf("LDAX B"); break; // move BC to A
-        case 0x0b: printf("DCX  B"); break; // dec BC
-        case 0x0c: printf("INR  C"); break; 
-        case 0x0d: printf("DCR  C"); break;
-        case 0x0e: printf("MVI  C, %02x", code[1]); opSize=2; break;
-        case 0x0f: printf("RRC"); break; // A >> 1, bit 7 gets previous read's bit 0
-        case 0x11: printf("LXI  D, %02x%02x"); opSize=3; break; // mov data[1],data[2] to ED
-        case 0x12: printf("STAX D"); break;
-        case 0x13: printf("INX  D"); break;
-        case 0x14: printf("INR  D"); break;
-        case 0x15: printf("DCR  D"); break;
-        case 0x16: printf("MVI  D, %02x", code[1]); opSize=2; break;
-        case 0x17: printf("RAL"); break;
-        case 0x19: printf("DAD  D"); break;
-        case 0x1a: printf("LDAX D"); break;
-        case 0x1b: printf("DCX  D"); break; // started seeing a pattern in IS here
-        case 0x1c: printf("INR  E"); break; 
-        case 0x1d: printf("DCR  E"); break;
-        case 0x1e: printf("MVI  E, %02x", code[1]); opSize=2; break;
-        case 0x1f: printf("RAR"); break;
-        case 0x21: printf("LXI  H, %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0x22: printf("SHLD %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0x23: printf("INX  H"); break;
-        case 0x24: printf("INR  H"); break;
-        case 0x25: printf("DCR  H"); break;
-        case 0x26: printf("MVI  H, %02x", code[1]); opSize=2; break;
-        case 0x27: printf("DAA"); break; // special
-        case 0x29: printf("DAD  H"); break;
-        case 0x2a: printf("LHLD %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0x2b: printf("DCX  H"); break;
-        case 0x2c: printf("INR  L"); break; 
-        case 0x2d: printf("DCR  L"); break;
-        case 0x2e: printf("MVI  L, %02x", code[1]); opSize=2; break;
+            break;
+        case 0x02: UnimplementedInstruction(state); break; // A into (BC)
+        case 0x03: UnimplementedInstruction(state); break; // inc BC by 1
+        case 0x04: UnimplementedInstruction(state); break; // inc B by 1
+        case 0x05: dcrOp(&state->b, state); break; // dec B by 1
+        case 0x06: {
+            state->b = opcode[1];
+            state->pc++;
+        } // B <- value[1]
+            break;
+        case 0x07: UnimplementedInstruction(state);  break; // A << 1, bit 0 becomes carry bit, gets previous read's bit 7 
+        case 0x09: {
+            uint32_t bc = (state->b) << 8 | state->c;
+            uint32_t hl = (state->h) << 8 | state->l;
+            uint32_t sum = bc + hl;
+            state->h = (sum & 0xff00) << 8;
+            state->l = sum & 0xff;
+            state->flags.c = (sum & 0xffff0000) > 0;
+        } // HL <- BC + HL
+            break;
+        case 0x0a: UnimplementedInstruction(state);  break; // move BC to A
+        case 0x0b: UnimplementedInstruction(state);  break; // dec BC
+        case 0x0c: UnimplementedInstruction(state);  break; 
+        case 0x0d: dcrOp(&state->c, state);  break;
+        case 0x0e: {
+            state->c = opcode[1];
+            state->pc++;
+        }
+            break;
+        case 0x0f: {
+            int8_t lowestBit = state->a & 0x1;
+            state->flags.c = lowestBit;
+            state->a = (lowestBit << 7) | (state->a >> 1);
+        } // A >> 1, the truncated bit becomes bit 7 and the carry 
+            break;
+        case 0x11: {
+            state->d = opcode[2];
+            state->e = opcode[1];
+        } // mov data[1],data[2] to ED
+            break;   
+        case 0x12: UnimplementedInstruction(state);  break;
+        case 0x13: {
+            state->e++;
+            if (state->e==0)
+                state->d++;
+        } // INX D
+            break;
+        case 0x14: UnimplementedInstruction(state);  break;
+        case 0x15: UnimplementedInstruction(state);  break;
+        case 0x16: UnimplementedInstruction(state);  break;
+        case 0x17: UnimplementedInstruction(state);  break;
+        case 0x19: {
+            uint32_t hl = (state->h) << 8 | state->l;
+            uint32_t de = (state->d) << 8 | state->e;
+            uint32_t sum = hl + de;
+            state->h = (sum & 0xff) >> 8;
+            state->l =  sum & 0xff;
+            state->flags.c = ((sum & 0xffff0000) > 0);
+        } // DAD D
+            break;
+        case 0x1a: {
+            uint16_t addr = state->d << 8 | state->e;
+            state->a = state->mem[addr];
+        } // LDAX D
+            break;
+        case 0x1b: UnimplementedInstruction(state);  break; 
+        case 0x1c: UnimplementedInstruction(state);  break;
+        case 0x1d: UnimplementedInstruction(state);  break;
+        case 0x1e: UnimplementedInstruction(state);  break;
+        case 0x1f: UnimplementedInstruction(state);  break;
+        case 0x21: {
+            state->h = opcode[2];
+            state->l = opcode[1];
+            state->pc += 2; 
+        } break; 
+        case 0x22: UnimplementedInstruction(state);  break;
+        case 0x23: {
+            state->l++;
+            if (state->l == 0)
+                state->h++;
+            
+        } break;
+        case 0x24: UnimplementedInstruction(state);  break;
+        case 0x25: UnimplementedInstruction(state);  break;
+        case 0x26: {
+            state->h = opcode[1];
+            state->pc++;
+        } break;
+        case 0x27: UnimplementedInstruction(state);  break;
+        case 0x29: {
+            uint32_t hl = state->h << 8 | state->l;
+            uint32_t sum = hl + hl;
+            state->h = (sum & 0xff00) >> 8;
+            state->l = sum & 0xff;
+            state->flags.c = ((sum & 0xffff0000) > 1);
+        } break;
+        case 0x2a: UnimplementedInstruction(state);  break;
+        case 0x2b: UnimplementedInstruction(state);  break;
+        case 0x2c: UnimplementedInstruction(state);  break;
+        case 0x2d: UnimplementedInstruction(state);  break;
+        case 0x2e: UnimplementedInstruction(state);  break;
         case 0x2f: printf("CMA"); break;
-        case 0x31: printf("LXI  SP, %02x%02x", code[2], code[1]); opSize=3; break; // SP = stack pointer, special reg
-        case 0x32: printf("STA %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0x33: printf("INX  SP"); break;
-        case 0x34: printf("INR  M"); break;
+        case 0x31: {
+            state->sp = opcode[2] << 8 | opcode[1];
+            state->pc += 2;     
+        }  break; // SP = stack pointer, special reg
+        case 0x32: {
+            uint16_t addr = opcode[2] << 8 | opcode[1];
+            state->mem[addr] = state->a;
+            state->pc += 2;
+        }  break;
+        case 0x33: UnimplementedInstruction(state);  break;
+        case 0x34: UnimplementedInstruction(state);  break;
         case 0x35: printf("DCR  M"); break;
-        case 0x36: printf("MVI  M, %02x", code[1]); opSize=2; break;
+        case 0x36: {
+            uint16_t addr = state->h << 8 | state->l;
+            state->mem[addr] = opcode[1];
+            state->pc++;
+        }  break;
         case 0x37: printf("STC"); break;
         case 0x39: printf("DAD  SP"); break;
-        case 0x3a: printf("LDA %02x%02x", code[2], code[1]); opSize=3; break;
+        case 0x3a: {
+            uint16_t addr = opcode[2] << 8 | opcode[1];
+            state->a = state->mem[addr];
+            state->pc += 2; 
+        }  break;
         case 0x3b: printf("DCX  SP"); break;
         case 0x3c: printf("INR  A"); break; 
         case 0x3d: printf("DCR  A"); break;
-        case 0x3e: printf("MVI  A, %02x", code[1]); opSize=2; break;
+        case 0x3e: {
+            state->a = opcode[1];
+            state->pc++;
+        }  break; // MVI A, D8
         case 0x3f: printf("CMC"); break;
         case 0x40: printf("MOV B,B"); break;
         case 0x41: printf("MOV B,C"); break;
@@ -118,7 +197,10 @@ void EmulateCPU(CPUState* state) {
         case 0x53: printf("MOV D,E"); break;
         case 0x54: printf("MOV D,H"); break;
         case 0x55: printf("MOV D,L"); break;
-        case 0x56: printf("MOV D,M"); break;
+        case 0x56: {
+            uint16_t addr = state->h << 8 | state->l;
+            state->d = state->mem[addr];
+        } break; // mov d, m
         case 0x57: printf("MOV D,A"); break;
         case 0x58: printf("MOV E,B"); break;
         case 0x59: printf("MOV E,C"); break;
@@ -126,7 +208,10 @@ void EmulateCPU(CPUState* state) {
         case 0x5b: printf("MOV E,E"); break;
         case 0x5c: printf("MOV E,H"); break;
         case 0x5d: printf("MOV E,L"); break;
-        case 0x5e: printf("MOV E,M"); break;
+        case 0x5e: {
+            uint16_t addr = state->h << 8 | state->l;
+            state->e = state->mem[addr];
+        } break;
         case 0x5f: printf("MOV E,A"); break;
         case 0x60: printf("MOV H,B"); break;
         case 0x61: printf("MOV H,C"); break;
@@ -134,7 +219,10 @@ void EmulateCPU(CPUState* state) {
         case 0x63: printf("MOV H,E"); break;
         case 0x64: printf("MOV H,H"); break;
         case 0x65: printf("MOV H,L"); break;
-        case 0x66: printf("MOV H,M"); break;
+        case 0x66: {
+            uint16_t addr = state->h << 8 | state->l;
+            state->h = state->mem[addr];
+        } break;
         case 0x67: printf("MOV H,A"); break;
         case 0x68: printf("MOV L,B"); break;
         case 0x69: printf("MOV L,C"); break;
@@ -143,22 +231,28 @@ void EmulateCPU(CPUState* state) {
         case 0x6c: printf("MOV L,H"); break;
         case 0x6d: printf("MOV L,L"); break;
         case 0x6e: printf("MOV L,M"); break;
-        case 0x6f: printf("MOV L,A"); break;
+        case 0x6f: state->l = state->a; break;
         case 0x70: printf("MOV M,B"); break;
         case 0x71: printf("MOV M,C"); break;
         case 0x72: printf("MOV M,D"); break;
         case 0x73: printf("MOV M,E"); break;
         case 0x74: printf("MOV M,H"); break;
         case 0x75: printf("MOV M,L"); break;
-        case 0x76: printf("HLT"); break;
-        case 0x77: printf("MOV M,A"); break;
+        case 0x76: exit(0); break;
+        case 0x77: {
+            uint16_t addr = state->h << 8 | state->l;
+            state->mem[addr] = state->a;
+        } break;
         case 0x78: printf("MOV A,B"); break;
         case 0x79: printf("MOV A,C"); break;
-        case 0x7a: printf("MOV A,D"); break;
-        case 0x7b: printf("MOV A,E"); break;
-        case 0x7c: printf("MOV A,H"); break;
+        case 0x7a: state->d = state->a; break;
+        case 0x7b: state->e = state->a; break;
+        case 0x7c: state->h = state->a; break;
         case 0x7d: printf("MOV A,L"); break;
-        case 0x7e: printf("MOV A,M"); break;
+        case 0x7e: {
+            uint16_t addr = state->h << 8 | state->l;
+            state->a = state->mem[addr];
+        } break;
         case 0x7f: printf("MOV A,A"); break;
         case 0x80: addOp(&state->b, state); break;
         case 0x81: addOp(&state->c, state); break;
@@ -199,7 +293,14 @@ void EmulateCPU(CPUState* state) {
         case 0xa4: printf("ANA H"); break;
         case 0xa5: printf("ANA L"); break;
         case 0xa6: printf("ANA M"); break;
-        case 0xa7: printf("ANA A"); break;
+        case 0xa7: {
+            state->a = state->a & state->a;
+            state->flags.z = (state->a == 0); 
+            state->flags.c = 0;
+            state->flags.ac = 0;
+            state->flags.s = ((state->a & 0x80) == 0x80);
+            state->flags.p = Parity(); // implm. this
+        } break;
         case 0xa8: printf("XRA B"); break;
         case 0xa9: printf("XRA C"); break;
         case 0xaa: printf("XRA D"); break;
@@ -207,7 +308,14 @@ void EmulateCPU(CPUState* state) {
         case 0xac: printf("XRA H"); break;
         case 0xad: printf("XRA L"); break;
         case 0xae: printf("XRA M"); break;
-        case 0xaf: printf("XRA A"); break;
+        case 0xaf: {
+            state->a = state->a ^ state->a;
+            state->flags.z = (state->a == 0); 
+            state->flags.c = 0;
+            state->flags.ac = 0;
+            state->flags.s = ((state->a & 0x80) == 0x80);
+            state->flags.p = Parity(); // implm. this
+        } break;
         case 0xb0: printf("ORA B"); break;
         case 0xb1: printf("ORA C"); break;
         case 0xb2: printf("ORA D"); break;
@@ -225,78 +333,160 @@ void EmulateCPU(CPUState* state) {
         case 0xbe: printf("CMP M"); break;
         case 0xbf: printf("CMP A"); break;
         case 0xc0: printf("RNZ"); break;
-        case 0xc1: printf("POP B"); break;
-        case 0xc2: printf("JNZ %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xc3: printf("JMP %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xc4: printf("CNZ %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xc5: printf("PUSH B"); break;
-        case 0xc6: printf("ADI %02x", code[1]); opSize=2; break;
+        case 0xc1: {
+            state->c = state->mem[state->sp];
+            state->b = state->mem[state->sp + 1];
+            state->sp += 2;
+        } break;
+        case 0xc2: {
+            if (state->flags.z) 
+                state->pc += 2;
+            else
+                state->pc = opcode[2] << 8 | opcode[1];
+        }  break;
+        case 0xc3: {
+            state->pc = opcode[2] << 8 | opcode[1];
+        }  break;
+        case 0xc4: UnimplementedInstruction(state);  break;
+        case 0xc5: {
+            state->mem[state->pc-2] = state->c;
+            state->mem[state->pc-1] = state->b;
+            state->sp -= 2;
+        } break;
+        case 0xc6: {
+            uint16_t sum = (uint16_t) state->a + (uint16_t) opcode[1];
+            state->flags.z = ((sum & 0xff) == 0); 
+            state->flags.c = (sum > 0xff);
+            state->flags.s = ((sum & 0x80) == 0x80);
+            state->flags.p = Parity(); // implm. this
+            state->a = (uint8_t) sum;
+            state->pc++;
+        }  break;
         case 0xc7: printf("RST 0"); break;
         case 0xc8: printf("RZ"); break;
-        case 0xc9: printf("RET"); break;
-        case 0xca: printf("JZ %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xcc: printf("CZ %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xcd: printf("CALL %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xce: printf("ACI %02x", code[1]); opSize=2; break;
+        case 0xc9: {
+            state->pc = state->mem[state->sp+1] << 8 | state->mem[state->sp];
+            state->sp += 2;
+        } break;
+        case 0xca: UnimplementedInstruction(state);  break;
+        case 0xcc: UnimplementedInstruction(state);  break;
+        case 0xcd: {
+            state->mem[state->sp-1] = ((state->pc+2) & 0xff00) >> 8;
+            state->mem[state->sp-2] = (state->pc+2) & 0xff;
+            state->sp -=2;
+            state->pc = opcode[2] << 8 | opcode[1];
+        }  break;
+        case 0xce: UnimplementedInstruction(state);  break;
         case 0xcf: printf("RST 1"); break;
         case 0xd0: printf("RNC"); break;
-        case 0xd1: printf("POP D"); break;
-        case 0xd2: printf("JNC %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xd3: printf("OUT %02x", code[1]); opSize=2; break;
-        case 0xd4: printf("CNC %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xd5: printf("PUSH D"); break;
-        case 0xd6: printf("SUI %02x", code[1]); opSize=2;break;
+        case 0xd1: {
+            state->e = state->mem[state->sp];
+            state->d = state->mem[state->sp+1];
+            state->sp += 2;
+        } break;
+        case 0xd2: UnimplementedInstruction(state);  break;
+        case 0xd3: {
+            // write contents of accumulator to device # D8
+            state->pc++;
+        }  break; // OUT D8
+        case 0xd4: UnimplementedInstruction(state);  break;
+        case 0xd5: {
+            state->mem[state->sp-2] = state->e;
+            state->mem[state->sp-1] = state->d;
+            state->sp -= 2;
+        } break;
+        case 0xd6: UnimplementedInstruction(state);  break;
         case 0xd7: printf("RST 2"); break;
         case 0xd8: printf("RC"); break;
-        case 0xda: printf("JC %02x%02x", code[2],code[1]); opSize=3; break;
-        case 0xdb: printf("IN %02x", code[1]); opSize=2;break;
-        case 0xdc: printf("CC %02x%02x", code[2],code[1]); opSize=3; break;
-        case 0xde: printf("SBI %02x", code[1]); opSize=2;break;
+        case 0xda: UnimplementedInstruction(state);  break;
+        case 0xdb: UnimplementedInstruction(state);  break;
+        case 0xdc: UnimplementedInstruction(state);  break;
+        case 0xde: UnimplementedInstruction(state);  break;
         case 0xdf: printf("RST 3"); break;
         case 0xe0: printf("RPO"); break;
-        case 0xe1: printf("POP H"); break;
-        case 0xe2: printf("JPO %02x%02x", code[2], code[1]); opSize=3; break;
+        case 0xe1: {
+            state->l = state->mem[state->sp];
+            state->h = state->mem[state->sp+1];
+            state->sp += 2;
+        } break;
+        case 0xe2: UnimplementedInstruction(state);  break;
         case 0xe3: printf("XTHL"); break;
-        case 0xe4: printf("CPO %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xe5: printf("PUSH H"); break;
-        case 0xe6: printf("ANI %02x", code[1]); opSize=2;break;
+        case 0xe4: UnimplementedInstruction(state);  break;
+        case 0xe5: {
+            state->mem[state->sp-2] = state->l;
+            state->mem[state->sp-1] = state->h;
+            state->sp -=2;
+        } break;
+        case 0xe6: {
+            state->a = state->a & opcode[1];
+            state->flags.z = (state->a == 0);
+            state->flags.s = ((state->a & 0x80) == 0x80);
+            state->flags.c = 0;
+            state->flags.ac = 0;
+            state->flags.p = Parity();
+            state->pc++;
+        }  break;
         case 0xe7: printf("RST 4"); break;
         case 0xe8: printf("RPE"); break;
         case 0xe9: printf("PCHL"); break;
-        case 0xea: printf("JPE %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xeb: printf("XCHG"); break;
-        case 0xec: printf("CPE %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xee: printf("XRI %02x", code[1]); opSize=2;break;
+        case 0xea: UnimplementedInstruction(state);  break;
+        case 0xeb: {
+            uint8_t temp = state->d;
+            state->d = state->h;
+            state->h = temp;
+            temp = state->e;
+            state->e = state->l;
+            state->l = temp;
+        } break;
+        case 0xec: UnimplementedInstruction(state);  break;
+        case 0xee: UnimplementedInstruction(state);  break;
         case 0xef: printf("RST 5"); break;
         case 0xf0: printf("RP"); break;
-        case 0xf1: printf("POP PSW"); break;
-        case 0xf2: printf("JP %02x%02x", code[2], code[1]); opSize=3; break;
+        case 0xf1: {
+            int8_t spVal = state->mem[state->sp];
+            state->flags.c = spVal & 1;
+            state->flags.p = (spVal >> 2) & 1;
+            state->flags.ac = (spVal >> 4) & 1;
+            state->flags.z = (spVal >> 6) & 1;
+            state->flags.s = (spVal >> 7) & 1;
+            state->a = state->mem[state->sp+1];
+            state->sp +=2;
+        } break;
+        case 0xf2: UnimplementedInstruction(state);  break;
         case 0xf3: printf("RP"); break;
-        case 0xf4: printf("CP %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xf5: printf("PUSH PSW"); break;
-        case 0xf6: printf("ORI %02x", code[1]); opSize=2;break;
-        case 0xf7: printf("RST 6"); break;
-        case 0xf8: printf("RM"); break;
-        case 0xf9: printf("SPHL"); break;
-        case 0xfa: printf("JM %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xfb: printf("EI"); break;
-        case 0xfc: printf("CM %02x%02x", code[2], code[1]); opSize=3; break;
-        case 0xfe: printf("CPI %02x", code[1]); opSize=2;break;
-        case 0xff: printf("RST 7"); break;
+        case 0xf4: UnimplementedInstruction(state);  break;
+        case 0xf5: {
+            state->mem[state->sp-1] = state->a;
+            uint8_t psw;
+            state->mem[state->sp-2] = psw;
+            state->sp -= 2;
+        } break;
+        case 0xf6: UnimplementedInstruction(state);  break;
+        case 0xf7: UnimplementedInstruction(state); break;
+        case 0xf8: UnimplementedInstruction(state); break;
+        case 0xf9: UnimplementedInstruction(state); break;
+        case 0xfa: UnimplementedInstruction(state);  break;
+        case 0xfb: state->int_enable = 1; break;
+        case 0xfc: UnimplementedInstruction(state);  break;
+        case 0xfe: {
+            
+        }  break;
+        case 0xff: UnimplementedInstruction(state); break;
         default: break;
     }
 
-    state->pc += 1;
+    state->pc++;
 }
 
 // adds register value to accumulator, if reg = NULL then it's from memory (HL)
 // should this return the answer instead and CPU handles store to mem?? thinking about coupling b/c of state
+// TODO: testing
 void addOp(uint8_t* reg, CPUState* state) {
     uint16_t answer = (uint16_t) state->a;
     printf("initial a val: %d", answer);
 
     if (reg == NULL) {
-        uint16_t* m = state->h >> 8 | state->l;
+        uint16_t* m = state->h << 8 | state->l;
         printf("m addr: %d, m val: %d", m, *m);
         answer += *m;
         printf("answer: %d", answer);
@@ -316,6 +506,12 @@ void addOp(uint8_t* reg, CPUState* state) {
     printf("reg a val: %d", state->a);
 }
 
-void adcOp(uint8_t *reg, CPUState* state) {
-    
+// assuming reg is valid pointer to register value
+// for space invaders, only have to implement for b and c regs, also don't have to handle ac (yet?)
+void dcrOp(uint8_t* reg, CPUState* state) {
+    uint16_t answer = (uint16_t) *reg - 1;
+    state->flags.z = ((answer & 0xff) == 0);
+    state->flags.p = Parity(answer & 0xff);
+    state->flags.s = ((answer & 0x80) != 0);
+    *reg = answer;
 }
