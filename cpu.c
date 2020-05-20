@@ -1,5 +1,7 @@
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include "disassembler.h"
 
 typedef struct FlagRegister {
     uint8_t c:1;        // carry flag 
@@ -25,12 +27,6 @@ typedef struct CPUState {
     uint8_t int_enable; // ??
 } CPUState;
 
-void UnimplementedInstruction(CPUState* state) {
-    state->pc--;
-    printf("Error: Unimplemented instruction.\n");
-    exit(1);
-}
-
 uint8_t parity(int x, int size) {
     int par = 0;
     x = (x & (1<<size)-1); // truncates num to desired length
@@ -42,10 +38,56 @@ uint8_t parity(int x, int size) {
     return (0 == (par&1));
 }
 
+// adds register value to accumulator, if reg = NULL then it's from memory (HL)
+// should this return the answer instead and CPU handles store to mem?? thinking about coupling b/c of state
+// TODO: testing
+void addOp(uint8_t* reg, CPUState* state) {
+    uint16_t answer = (uint16_t) state->a;
+    printf("initial a val: %d", answer);
+
+    if (reg == NULL) {
+        uint16_t* m = state->h << 8 | state->l;
+        printf("m addr: %d, m val: %d", m, *m);
+        answer += *m;
+        printf("answer: %d", answer);
+        free(m); // i think this is ok LOL
+    } else {
+        printf("m addr: %d, m val: %d", reg, *reg);
+        answer += (uint16_t) *reg;
+        printf("answer: %d", answer);
+    }
+
+    state->flags.z = ((answer & 0xff) == 0); // can i just do (answer & 0xff)
+    state->flags.s = ((answer & 0x80) != 0);
+    state->flags.c = (answer > 0xff);
+    state->flags.p = parity(answer, 8);
+    state->a = answer & 0xff;
+
+    printf("reg a val: %d", state->a);
+}
+
+// assuming reg is valid pointer to register value
+// for space invaders, only have to implement for b and c regs, also don't have to handle ac (yet?)
+void dcrOp(uint8_t* reg, CPUState* state) {
+    uint16_t answer = (uint16_t) *reg - 1;
+    state->flags.z = ((answer & 0xff) == 0);
+    state->flags.p = parity(answer, 8);
+    state->flags.s = ((answer & 0x80) != 0);
+    *reg = answer;
+}
+
+void UnimplementedInstruction(CPUState* state) {
+    state->pc--;
+    Disassemble8080(state->mem,state->pc);
+    printf("Error: Unimplemented instruction %04x\n", state->mem[state->pc]);
+    exit(1);
+}
+
 void EmulateCPU(CPUState* state) {
     unsigned char *opcode = &state->mem[state->pc]; // something like 0xff
-    unsigned char opcode0 = *opcode & 0xf0;
-    switch (opcode0) {
+    Disassemble8080(state->mem,state->pc);
+    state->pc++;
+    switch (*opcode) {
         case 0x00: break;
         case 0x01: {
             state->b = opcode[1];
@@ -494,44 +536,42 @@ void EmulateCPU(CPUState* state) {
         case 0xff: UnimplementedInstruction(state); break;
         default: break;
     }
-
-    state->pc++;
 }
 
-// adds register value to accumulator, if reg = NULL then it's from memory (HL)
-// should this return the answer instead and CPU handles store to mem?? thinking about coupling b/c of state
-// TODO: testing
-void addOp(uint8_t* reg, CPUState* state) {
-    uint16_t answer = (uint16_t) state->a;
-    printf("initial a val: %d", answer);
+CPUState* initializeCPU() {
+    CPUState* cpu = (CPUState*) calloc(1,sizeof(CPUState));
+    cpu->mem = malloc(0x10000); // 64KB memory
+    return cpu;
+}
 
-    if (reg == NULL) {
-        uint16_t* m = state->h << 8 | state->l;
-        printf("m addr: %d, m val: %d", m, *m);
-        answer += *m;
-        printf("answer: %d", answer);
-        free(m); // i think this is ok LOL
-    } else {
-        printf("m addr: %d, m val: %d", reg, *reg);
-        answer += (u_int16_t) *reg;
-        printf("answer: %d", answer);
+void loadFile(CPUState* state, char* file, uint32_t pos) {
+    FILE *fp = fopen(file, "rb");
+    if (fp == NULL) {
+        printf("Error: Invalid file %s", file);
+        exit(1);
     }
 
-    state->flags.z = ((answer & 0xff) == 0); // can i just do (answer & 0xff)
-    state->flags.s = ((answer & 0x80) != 0);
-    state->flags.c = (answer > 0xff);
-    state->flags.p = parity(answer, 8);
-    state->a = answer & 0xff;
+    fseek(fp,0L,SEEK_END);
+    int fsize = ftell(fp);
+    fseek(fp,0L,SEEK_SET);
 
-    printf("reg a val: %d", state->a);
+    fread(&state->mem[pos],1,fsize, fp);
+
+    fclose(fp);
 }
 
-// assuming reg is valid pointer to register value
-// for space invaders, only have to implement for b and c regs, also don't have to handle ac (yet?)
-void dcrOp(uint8_t* reg, CPUState* state) {
-    uint16_t answer = (uint16_t) *reg - 1;
-    state->flags.z = ((answer & 0xff) == 0);
-    state->flags.p = parity(answer, 8);
-    state->flags.s = ((answer & 0x80) != 0);
-    *reg = answer;
+int main(int argc, char** argv) {
+    int done = 0;
+    CPUState* CPU = initializeCPU();
+    
+    loadFile(CPU, "./rom/invaders.h",0x0000);
+    loadFile(CPU, "./rom/invaders.g", 0x0800);
+    loadFile(CPU, "./rom/invaders.f", 0x1000);
+    loadFile(CPU, "./rom/invaders.e", 0x1800);
+    printf("loaded files\n");
+
+    while (done == 0)
+        EmulateCPU(CPU);
+
+    return 0;
 }

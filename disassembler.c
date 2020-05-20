@@ -31,7 +31,7 @@ int Disassemble8080(unsigned char* stream, int pc) {
         case 0x0d: printf("DCR  C"); break;
         case 0x0e: printf("MVI  C, %02x", code[1]); opSize=2; break;
         case 0x0f: printf("RRC"); break; // A >> 1, bit 7 gets previous read's bit 0
-        case 0x11: printf("LXI  D, %02x%02x"); opSize=3; break; // mov data[1],data[2] to ED
+        case 0x11: printf("LXI  D, %02x%02x", code[2], code[1]); opSize=3; break; // mov data[1],data[2] to ED
         case 0x12: printf("STAX D"); break;
         case 0x13: printf("INX  D"); break;
         case 0x14: printf("INR  D"); break;
@@ -265,28 +265,4 @@ int Disassemble8080(unsigned char* stream, int pc) {
     // could absolutely refactor this
     printf("\n");
     return opSize;
-}
-
-int main (int argc, char** argv) {
-    int pc = 0;
-    FILE *fp = fopen(argv[1], "rb"); // rb is reading in binary
-
-    if (fp == NULL) {
-        printf("cannot find file\n");
-        exit(1);
-    }
-
-    fseek(fp, 0L, SEEK_END);
-    int fsize = ftell(fp);
-    fseek(fp, 0L, SEEK_SET);
-
-    unsigned char *buffer = malloc(fsize);
-
-    fread(buffer, 1, fsize, fp);
-    fclose(fp);
-    
-    while(pc < fsize)
-        pc += Disassemble8080(buffer, pc);
-        
-    return 0;
 }
