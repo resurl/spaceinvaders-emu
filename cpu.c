@@ -132,6 +132,7 @@ void EmulateCPU(CPUState* state) {
         case 0x11: {
             state->d = opcode[2];
             state->e = opcode[1];
+            state->pc += 2;
         } // mov data[1],data[2] to ED
             break;   
         case 0x12: UnimplementedInstruction(state);  break;
