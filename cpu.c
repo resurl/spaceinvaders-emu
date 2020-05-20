@@ -34,8 +34,23 @@ uint8_t parity(int x, int size) {
         if(x & 1) par++;
         x = x >> 1;
     }
-
     return (0 == (par&1));
+}
+
+void printRegs(CPUState* state, uint8_t psw) {
+    printf("\t");
+    printf(" af: %02x%02x", state->a, psw);
+    printf(" bc: %02x%02x", state->b, state->c);
+    printf(" de: %02x%02x", state->d, state->e);
+    printf(" hl: %02x%02x", state->h, state->l);
+    printf(" pc: %04x", state->pc);
+    printf(" sp: %02x\n", state->sp);
+}
+
+void printFlags(CPUState* state) {
+    printf("    sz0a0p1c: %d%d", state->flags.s, state->flags.z);
+    printf("0A0%d", state->flags.p);
+    printf("1%d\n", state->flags.c);
 }
 
 // adds register value to accumulator, if reg = NULL then it's from memory (HL)
@@ -299,9 +314,9 @@ void EmulateCPU(CPUState* state) {
         } break;
         case 0x78: UnimplementedInstruction(state);  break;
         case 0x79: UnimplementedInstruction(state);  break;
-        case 0x7a: state->d = state->a; break;
-        case 0x7b: state->e = state->a; break;
-        case 0x7c: state->h = state->a; break;
+        case 0x7a: state->a = state->d; break;
+        case 0x7b: state->a = state->e; break;
+        case 0x7c: state->a = state->h; break;
         case 0x7d: UnimplementedInstruction(state);  break;
         case 0x7e: {
             uint16_t addr = state->h << 8 | state->l;
@@ -393,10 +408,10 @@ void EmulateCPU(CPUState* state) {
             state->sp += 2;
         } break;
         case 0xc2: {
-            if (state->flags.z) 
-                state->pc += 2;
-            else
+            if (state->flags.z == 0) // if not zero 
                 state->pc = opcode[2] << 8 | opcode[1];
+            else
+                state->pc += 2;
         }  break;
         case 0xc3: {
             state->pc = opcode[2] << 8 | opcode[1];
@@ -506,7 +521,7 @@ void EmulateCPU(CPUState* state) {
             state->a = state->mem[state->sp+1];
             state->sp +=2;
         } break;
-        case 0xf2: UnimplementedInstruction(state);  break;
+        case 0xf2: {UnimplementedInstruction(state);}  break;
         case 0xf3: UnimplementedInstruction(state);  break;
         case 0xf4: UnimplementedInstruction(state);  break;
         case 0xf5: {
@@ -537,7 +552,20 @@ void EmulateCPU(CPUState* state) {
         case 0xff: UnimplementedInstruction(state); break;
         default: break;
     }
+
+    uint8_t psw = (state->flags.c |
+                    state->flags.p << 1|
+                    state->flags.ac << 2 |
+                    state->flags.z << 3|
+                    state->flags.s << 4);
+    
+    // for debugging
+    // printFlags(state);
+    printRegs(state, psw);
+    // printf("\n");
 }
+
+
 
 CPUState* initializeCPU() {
     CPUState* cpu = (CPUState*) calloc(1,sizeof(CPUState));
@@ -565,7 +593,7 @@ int main(int argc, char** argv) {
     int done = 0;
     CPUState* CPU = initializeCPU();
     
-    loadFile(CPU, "./rom/invaders.h",0x0000);
+    loadFile(CPU, "./rom/invaders.h", 0x0000);
     loadFile(CPU, "./rom/invaders.g", 0x0800);
     loadFile(CPU, "./rom/invaders.f", 0x1000);
     loadFile(CPU, "./rom/invaders.e", 0x1800);
