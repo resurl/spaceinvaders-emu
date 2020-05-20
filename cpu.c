@@ -456,10 +456,10 @@ void EmulateCPU(CPUState* state) {
         case 0xf1: {
             int8_t spVal = state->mem[state->sp];
             state->flags.c = spVal & 1;
-            state->flags.p = (spVal >> 2) & 1;
-            state->flags.ac = (spVal >> 4) & 1;
-            state->flags.z = (spVal >> 6) & 1;
-            state->flags.s = (spVal >> 7) & 1;
+            state->flags.p = (spVal >> 1) & 1;
+            state->flags.ac = (spVal >> 2) & 1;
+            state->flags.z = (spVal >> 3) & 1;
+            state->flags.s = (spVal >> 4) & 1;
             state->a = state->mem[state->sp+1];
             state->sp +=2;
         } break;
@@ -468,7 +468,11 @@ void EmulateCPU(CPUState* state) {
         case 0xf4: UnimplementedInstruction(state);  break;
         case 0xf5: {
             state->mem[state->sp-1] = state->a;
-            uint8_t psw;
+            uint8_t psw = (state->flags.c |
+                          state->flags.p << 1|
+                          state->flags.ac << 2 |
+                          state->flags.z << 3|
+                          state->flags.s << 4);
             state->mem[state->sp-2] = psw;
             state->sp -= 2;
         } break;
@@ -480,8 +484,13 @@ void EmulateCPU(CPUState* state) {
         case 0xfb: state->int_enable = 1; break;
         case 0xfc: UnimplementedInstruction(state);  break;
         case 0xfe: {
-            
-        }  break;
+            uint8_t diff = state->a - opcode[1];
+            state->flags.c = (opcode[1] > state->a);
+            state->flags.p = parity(diff, 8);
+            state->flags.z = (diff == 0);
+            state->flags.s = ((diff & 0x80) == 0x80); 
+            state->pc++;
+        }  break; // CPI D8
         case 0xff: UnimplementedInstruction(state); break;
         default: break;
     }
