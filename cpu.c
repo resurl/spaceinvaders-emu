@@ -31,6 +31,17 @@ void UnimplementedInstruction(CPUState* state) {
     exit(1);
 }
 
+uint8_t parity(int x, int size) {
+    int par = 0;
+    x = (x & (1<<size)-1); // truncates num to desired length
+    for(int i =0; i < size; i++) {
+        if(x & 1) par++;
+        x = x >> 1;
+    }
+
+    return (0 == (par&1));
+}
+
 void EmulateCPU(CPUState* state) {
     unsigned char *opcode = &state->mem[state->pc]; // something like 0xff
     unsigned char opcode0 = *opcode & 0xf0;
@@ -299,7 +310,7 @@ void EmulateCPU(CPUState* state) {
             state->flags.c = 0;
             state->flags.ac = 0;
             state->flags.s = ((state->a & 0x80) == 0x80);
-            state->flags.p = Parity(); // implm. this
+            state->flags.p = parity(state->a, 8); // implm. this
         } break;
         case 0xa8: UnimplementedInstruction(state);  break;
         case 0xa9: UnimplementedInstruction(state);  break;
@@ -314,7 +325,7 @@ void EmulateCPU(CPUState* state) {
             state->flags.c = 0;
             state->flags.ac = 0;
             state->flags.s = ((state->a & 0x80) == 0x80);
-            state->flags.p = Parity(); // implm. this
+            state->flags.p = parity(state->a, 8); // implm. this
         } break;
         case 0xb0: UnimplementedInstruction(state);  break;
         case 0xb1: UnimplementedInstruction(state);  break;
@@ -358,7 +369,7 @@ void EmulateCPU(CPUState* state) {
             state->flags.z = ((sum & 0xff) == 0); 
             state->flags.c = (sum > 0xff);
             state->flags.s = ((sum & 0x80) == 0x80);
-            state->flags.p = Parity(); // implm. this
+            state->flags.p = parity(sum, 8); // implm. this
             state->a = (uint8_t) sum;
             state->pc++;
         }  break;
@@ -423,7 +434,7 @@ void EmulateCPU(CPUState* state) {
             state->flags.s = ((state->a & 0x80) == 0x80);
             state->flags.c = 0;
             state->flags.ac = 0;
-            state->flags.p = Parity();
+            state->flags.p = parity(state->a, 8);
             state->pc++;
         }  break;
         case 0xe7: UnimplementedInstruction(state);  break;
@@ -500,7 +511,7 @@ void addOp(uint8_t* reg, CPUState* state) {
     state->flags.z = ((answer & 0xff) == 0); // can i just do (answer & 0xff)
     state->flags.s = ((answer & 0x80) != 0);
     state->flags.c = (answer > 0xff);
-    state->flags.p = Parity(answer & 0xff);
+    state->flags.p = parity(answer, 8);
     state->a = answer & 0xff;
 
     printf("reg a val: %d", state->a);
@@ -511,7 +522,7 @@ void addOp(uint8_t* reg, CPUState* state) {
 void dcrOp(uint8_t* reg, CPUState* state) {
     uint16_t answer = (uint16_t) *reg - 1;
     state->flags.z = ((answer & 0xff) == 0);
-    state->flags.p = Parity(answer & 0xff);
+    state->flags.p = parity(answer, 8);
     state->flags.s = ((answer & 0x80) != 0);
     *reg = answer;
 }
