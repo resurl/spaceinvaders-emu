@@ -67,7 +67,7 @@ int Disassemble8080(unsigned char* stream, int pc) {
         case 0x36: printf("MVI  M, %02x      ", code[1]); opSize=2; break;
         case 0x37: printf("STC             "); break;
         case 0x39: printf("DAD  SP         "); break;
-        case 0x3a: printf("LDA %02x%02x      ", code[2], code[1]); opSize=3; break;
+        case 0x3a: printf("LDA %02x%02x        ", code[2], code[1]); opSize=3; break;
         case 0x3b: printf("DCX  SP         "); break;
         case 0x3c: printf("INR  A          "); break; 
         case 0x3d: printf("DCR  A          "); break;
