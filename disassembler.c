@@ -206,7 +206,7 @@ int Disassemble8080(unsigned char* stream, int pc) {
         case 0xc2: printf("JNZ %02x%02x        ", code[2], code[1]); opSize=3; break;
         case 0xc3: printf("JMP %02x%02x        ", code[2], code[1]); opSize=3; break;
         case 0xc4: printf("CNZ %02x%02x        ", code[2], code[1]); opSize=3; break;
-        case 0xc5: printf("PUSH BC          "); break;
+        case 0xc5: printf("PUSH BC         "); break;
         case 0xc6: printf("ADI %02x        ", code[1]); opSize=2; break;
         case 0xc7: printf("RST 0           "); break;
         case 0xc8: printf("RZ              "); break;
@@ -219,7 +219,7 @@ int Disassemble8080(unsigned char* stream, int pc) {
         case 0xd0: printf("RNC             "); break;
         case 0xd1: printf("POP D           "); break;
         case 0xd2: printf("JNC %02x%02x    ", code[2], code[1]); opSize=3; break;
-        case 0xd3: printf("OUT %02x        ", code[1]); opSize=2; break;
+        case 0xd3: printf("OUT %02x          ", code[1]); opSize=2; break;
         case 0xd4: printf("CNC %02x%02x    ", code[2], code[1]); opSize=3; break;
         case 0xd5: printf("PUSH D          "); break;
         case 0xd6: printf("SUI %02x        ", code[1]); opSize=2;break;

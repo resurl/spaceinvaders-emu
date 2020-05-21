@@ -104,8 +104,8 @@ void EmulateCPU(CPUState* state) {
     switch (*opcode) {
         case 0x00: break;
         case 0x01: {
-            state->b = opcode[1];
-            state->c = opcode[2];
+            state->b = opcode[2];
+            state->c = opcode[1];
             state->pc += 2;
         }
             break;
@@ -123,7 +123,7 @@ void EmulateCPU(CPUState* state) {
             uint32_t bc = (state->b) << 8 | state->c;
             uint32_t hl = (state->h) << 8 | state->l;
             uint32_t sum = bc + hl;
-            state->h = (sum & 0xff00) << 8;
+            state->h = (sum & 0xff00) >> 8;
             state->l = sum & 0xff;
             state->flags.c = (sum & 0xffff0000) > 0;
         } // HL <- BC + HL
@@ -418,8 +418,8 @@ void EmulateCPU(CPUState* state) {
         }  break;
         case 0xc4: UnimplementedInstruction(state);  break;
         case 0xc5: {
-            state->mem[state->pc-2] = state->c;
-            state->mem[state->pc-1] = state->b;
+            state->mem[state->sp-2] = state->c;
+            state->mem[state->sp-1] = state->b;
             state->sp -= 2;
         } break;
         case 0xc6: {
