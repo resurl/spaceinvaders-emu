@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include "disassembler.h"
 
+#define FOR_CPUDIAG
+
 typedef struct FlagRegister {
     uint8_t c:1;        // carry flag 
     uint8_t p:1;        // parity flag 
@@ -52,32 +54,60 @@ void printFlags(CPUState* state) {
     printf("#%d", state->flags.c);
 }
 
+uint16_t returnAddr(unsigned char* opcode) {
+    return (opcode[2] << 8 | opcode[1]);
+}
+
+
+void ret(CPUState* state) {
+    state->pc = state->mem[state->sp+1] << 8 | state->mem[state->sp];
+    state->sp += 2;
+}
+
 // adds register value to accumulator, if reg = NULL then it's from memory (HL)
 // should this return the answer instead and CPU handles store to mem?? thinking about coupling b/c of state
 // TODO: testing
 void addOp(uint8_t* reg, CPUState* state) {
     uint16_t answer = (uint16_t) state->a;
-    printf("initial a val: %d", answer);
+    //printf("initial a val: %d", answer);
 
     if (reg == NULL) {
-        uint16_t* m = state->h << 8 | state->l;
-        printf("m addr: %d, m val: %d", m, *m);
+        uint16_t* m = (uint16_t*) (state->h << 8 | state->l);
+        //printf("m addr: %d, m val: %d", m, *m);
         answer += *m;
-        printf("answer: %d", answer);
-        free(m); // i think this is ok LOL
+        //printf("answer: %d", answer);
+        //free(m); // i think this is ok LOL
     } else {
-        printf("m addr: %d, m val: %d", reg, *reg);
+        //printf("m addr: %d, m val: %d", reg, *reg);
         answer += (uint16_t) *reg;
-        printf("answer: %d", answer);
+        //printf("answer: %d", answer);
     }
 
-    state->flags.z = ((answer & 0xff) == 0); // can i just do (answer & 0xff)
+    state->flags.z = ((answer & 0xff) == 0);
     state->flags.s = ((answer & 0x80) != 0);
     state->flags.c = (answer > 0xff);
     state->flags.p = parity(answer, 8);
     state->a = answer & 0xff;
 
-    printf("reg a val: %d", state->a);
+    //printf("reg a val: %d", state->a);
+}
+
+void adcOp(uint8_t* reg, CPUState* state) {
+    uint16_t sum = (uint16_t) state->a + (uint16_t) *reg + state->flags.c;
+    state->flags.z = ((sum & 0xff) == 0);
+    state->flags.c = (sum > 0xff);
+    state->flags.p = parity(sum, 8);
+    state->flags.s = ((sum & 0x80) != 0);
+    state->a = sum & 0xff;
+}
+
+void subOp(uint8_t* reg, CPUState* state) {
+    uint16_t diff = (uint16_t) state->a - (uint16_t) *reg;
+    state->flags.z = (diff & 0xff) == 0;
+    state->flags.c = (diff > 0xff);
+    state->flags.s = (diff & 0x80 != 0);
+    state->flags.p = parity(diff, 8);
+    state->a = diff & 0xff;
 }
 
 // assuming reg is valid pointer to register value
@@ -88,6 +118,12 @@ void dcrOp(uint8_t* reg, CPUState* state) {
     state->flags.p = parity(answer, 8);
     state->flags.s = ((answer & 0x80) != 0);
     *reg = answer;
+}
+
+void updateAllFlags(uint16_t val, CPUState* state) {
+    state->flags.z = ((val & 0xff) == 0);
+    state->flags.p = parity(val, 8);
+    state->flags.s = ((val & 0x80) >= 0x80);
 }
 
 void UnimplementedInstruction(CPUState* state) {
@@ -102,23 +138,37 @@ void EmulateCPU(CPUState* state) {
     Disassemble8080(state->mem,state->pc);
     state->pc++;
     switch (*opcode) {
-        case 0x00: break;
+        case 0x00: break;                           // NOP
         case 0x01: {
             state->b = opcode[2];
             state->c = opcode[1];
             state->pc += 2;
-        }
+        }                                           // LXI, B D8; BC = D8
             break;
-        case 0x02: UnimplementedInstruction(state); break; // A into (BC)
-        case 0x03: UnimplementedInstruction(state); break; // inc BC by 1
-        case 0x04: UnimplementedInstruction(state); break; // inc B by 1
-        case 0x05: dcrOp(&state->b, state); break; // dec B by 1
+        case 0x02: {
+            uint16_t addr = state->b << 8 | state->c;
+            state->mem[addr] = state->a;
+        } break;                                    // STAX B; (BC) <- A
+        case 0x03: {
+            state->c++;
+            if (state->c == 0)  
+                state->b++;
+        } break;                                    // INX B; BC <- BC + 1
+        case 0x04: {
+            state->b++;
+            updateAllFlags(state->b, state);        // !!! check this 
+        } break;                                    // INR B; B <- B + 1
+        case 0x05: dcrOp(&state->b, state); break;  // dec B by 1
         case 0x06: {
             state->b = opcode[1];
             state->pc++;
-        } // B <- value[1]
+        }                                           // MVI B, D8 B <- mem[pc+1]
             break;
-        case 0x07: UnimplementedInstruction(state);  break; // A << 1, bit 0 becomes carry bit, gets previous read's bit 7 
+        case 0x07: {
+            uint8_t msb = state->a & 0x80;
+            state->a = (state->a << 1) & 0xfe | msb;
+            state->flags.c = msb;
+        }  break;                                   // A << 1, bit 0 & carry = last bit 7 
         case 0x09: {
             uint32_t bc = (state->b) << 8 | state->c;
             uint32_t hl = (state->h) << 8 | state->l;
@@ -128,7 +178,10 @@ void EmulateCPU(CPUState* state) {
             state->flags.c = (sum & 0xffff0000) > 0;
         } // HL <- BC + HL
             break;
-        case 0x0a: UnimplementedInstruction(state);  break; // move BC to A
+        case 0x0a: {
+            uint16_t addr = state->b << 8 | state->c;
+            state->a = state->mem[addr];
+        }  break; // LDAX B; A <- (BC)
         case 0x0b: UnimplementedInstruction(state);  break; // dec BC
         case 0x0c: UnimplementedInstruction(state);  break; 
         case 0x0d: dcrOp(&state->c, state);  break;
@@ -183,7 +236,7 @@ void EmulateCPU(CPUState* state) {
             state->h = opcode[2];
             state->l = opcode[1];
             state->pc += 2; 
-        } break; 
+        } break; // LXI H, D16; HL = d16
         case 0x22: UnimplementedInstruction(state);  break;
         case 0x23: {
             state->l++;
@@ -201,7 +254,6 @@ void EmulateCPU(CPUState* state) {
         case 0x29: {
             uint32_t hl = state->h << 8 | state->l;
             uint32_t sum = hl + hl;
-            printf("sum: %04x", sum);
             state->h = (sum & 0xff00) >> 8;
             state->l = sum & 0xff;
             state->flags.c = ((sum & 0xffff0000) > 1);
@@ -286,33 +338,48 @@ void EmulateCPU(CPUState* state) {
         case 0x61: UnimplementedInstruction(state);  break;
         case 0x62: UnimplementedInstruction(state);  break;
         case 0x63: UnimplementedInstruction(state);  break;
-        case 0x64: UnimplementedInstruction(state);  break;
+        case 0x64: {
+            state->h = state->h;
+        }  break; // MOV H,H; H <- H
         case 0x65: UnimplementedInstruction(state);  break;
         case 0x66: {
             uint16_t addr = state->h << 8 | state->l;
             state->h = state->mem[addr];
         } break;
         case 0x67: UnimplementedInstruction(state);  break;
-        case 0x68: UnimplementedInstruction(state);  break;
+        case 0x68: {
+            state->l = state->b;
+        }  break; // MOV L,B; L <- B
         case 0x69: UnimplementedInstruction(state);  break;
-        case 0x6a: UnimplementedInstruction(state);  break;
+        case 0x6a: {
+            state->l = state->d;
+        }  break; // MOV L,D; L <- D
         case 0x6b: UnimplementedInstruction(state);  break;
         case 0x6c: UnimplementedInstruction(state);  break;
         case 0x6d: UnimplementedInstruction(state);  break;
-        case 0x6e: UnimplementedInstruction(state);  break;
+        case 0x6e: {
+            uint16_t addr = state->h << 8 | state->l;
+            state->l = state->mem[addr];
+        }  break; // MOV L, M; L <- (HL)
         case 0x6f: state->l = state->a; break;
         case 0x70: UnimplementedInstruction(state);  break;
         case 0x71: UnimplementedInstruction(state);  break;
         case 0x72: UnimplementedInstruction(state);  break;
         case 0x73: UnimplementedInstruction(state);  break;
-        case 0x74: UnimplementedInstruction(state);  break;
-        case 0x75: UnimplementedInstruction(state);  break;
+        case 0x74: {
+            uint16_t addr = state->h << 8 | state->l;
+            state->mem[addr] = state->h;
+        }  break; // MOV M,H; (HL) <- H
+        case 0x75: {
+            uint16_t addr = state->h << 8 | state->l;
+            state->mem[addr] = state->l;
+        }  break; // MOV M,L; (HL) <- L
         case 0x76: exit(0); break;
         case 0x77: {
             uint16_t addr = state->h << 8 | state->l;
             state->mem[addr] = state->a;    
         } break;
-        case 0x78: UnimplementedInstruction(state);  break;
+        case 0x78: state->a = state->b;  break;
         case 0x79: UnimplementedInstruction(state);  break;
         case 0x7a: state->a = state->d; break;
         case 0x7b: state->a = state->e; break;
@@ -332,7 +399,7 @@ void EmulateCPU(CPUState* state) {
         case 0x86: addOp(NULL, state); break;
         case 0x87: addOp(&state->a, state); break;
         case 0x88: UnimplementedInstruction(state);  break;
-        case 0x89: UnimplementedInstruction(state);  break;
+        case 0x89: adcOp(&state->c, state);  break;
         case 0x8a: UnimplementedInstruction(state);  break;
         case 0x8b: UnimplementedInstruction(state);  break;
         case 0x8c: UnimplementedInstruction(state);  break;
@@ -343,10 +410,17 @@ void EmulateCPU(CPUState* state) {
         case 0x91: UnimplementedInstruction(state);  break;
         case 0x92: UnimplementedInstruction(state);  break;
         case 0x93: UnimplementedInstruction(state);  break;
-        case 0x94: UnimplementedInstruction(state);  break;
+        case 0x94: {
+            uint16_t diff = (uint16_t) state->a - (uint16_t) state->h;
+            state->flags.z = (diff & 0xff) == 0;
+            state->flags.c = (diff > 0xff);
+            state->flags.s = (diff & 0x80 != 0);
+            state->flags.p = parity(diff, 8);
+            state->a = diff & 0xff;
+        }  break; // SUB H; A <- A - H
         case 0x95: UnimplementedInstruction(state);  break;
         case 0x96: UnimplementedInstruction(state);  break;
-        case 0x97: UnimplementedInstruction(state);  break;
+        case 0x97: subOp(&state->a,state); break; // SUB A; A <- A - A
         case 0x98: UnimplementedInstruction(state);  break;
         case 0x99: UnimplementedInstruction(state);  break;
         case 0x9a: UnimplementedInstruction(state);  break;
@@ -370,12 +444,26 @@ void EmulateCPU(CPUState* state) {
             state->flags.s = ((state->a & 0x80) == 0x80);
             state->flags.p = parity(state->a, 8); // implm. this
         } break;
-        case 0xa8: UnimplementedInstruction(state);  break;
+        case 0xa8: {
+            state->a = state->a ^ state->b;
+            state->flags.z = (state->a == 0); 
+            state->flags.c = 0;
+            state->flags.ac = 0;
+            state->flags.s = ((state->a & 0x80) == 0x80);
+            state->flags.p = parity(state->a, 8);
+        }  break; // XRA B; 
         case 0xa9: UnimplementedInstruction(state);  break;
         case 0xaa: UnimplementedInstruction(state);  break;
         case 0xab: UnimplementedInstruction(state);  break;
         case 0xac: UnimplementedInstruction(state);  break;
-        case 0xad: UnimplementedInstruction(state);  break;
+        case 0xad: {
+            state->a = state->a ^ state->l;
+            state->flags.z = (state->a == 0); 
+            state->flags.c = 0;
+            state->flags.ac = 0;
+            state->flags.s = ((state->a & 0x80) == 0x80);
+            state->flags.p = parity(state->a, 8);
+        }  break; // XRA L; A <- A ^ L
         case 0xae: UnimplementedInstruction(state);  break;
         case 0xaf: {
             state->a = state->a ^ state->a;
@@ -383,22 +471,61 @@ void EmulateCPU(CPUState* state) {
             state->flags.c = 0;
             state->flags.ac = 0;
             state->flags.s = ((state->a & 0x80) == 0x80);
-            state->flags.p = parity(state->a, 8); // implm. this
+            state->flags.p = parity(state->a, 8);
         } break;
         case 0xb0: UnimplementedInstruction(state);  break;
-        case 0xb1: UnimplementedInstruction(state);  break;
+        case 0xb1: {
+            state->a = state->a | state->c;
+            state->flags.z = (state->a == 0);
+            state->flags.p = parity(state->a, 8);
+            state->flags.s = ((state->a & 0x80) != 0);
+            state->flags.c = 0;
+        }  break;
         case 0xb2: UnimplementedInstruction(state);  break;
         case 0xb3: UnimplementedInstruction(state);  break;
         case 0xb4: UnimplementedInstruction(state);  break;
-        case 0xb5: UnimplementedInstruction(state);  break;
-        case 0xb6: UnimplementedInstruction(state);  break;
+        case 0xb5: {
+            state->a = state->a | state->l;
+            state->flags.z = (state->a == 0);
+            state->flags.p = parity(state->a, 8);
+            state->flags.s = ((state->a & 0x80) != 0);
+            state->flags.c = 0;
+            //UnimplementedInstruction(state);
+        }  break; // ORA L; A <- A | L
+        case 0xb6: {
+            uint16_t addr = state->h << 8 | state->l;
+            state->a = state->a | state->mem[addr];
+            state->flags.z = (state->a == 0);
+            state->flags.p = parity(state->a, 8);
+            state->flags.s = ((state->a & 0x80) != 0);
+            state->flags.c = 0;
+        }  break; // ORA M; A <- A | (HL)
         case 0xb7: UnimplementedInstruction(state);  break;
-        case 0xb8: UnimplementedInstruction(state);  break;
+        case 0xb8: {
+            uint16_t diff = state->a - state->b;
+            state->flags.c = (state->a < state->b);
+            state->flags.z = (state->b == state->a);
+            state->flags.s = ((diff & 0xff00) != 0);
+            state->flags.p = parity(diff, 8);
+            //UnimplementedInstruction(state);
+        }  break; // CMP B; A - B
         case 0xb9: UnimplementedInstruction(state);  break;
         case 0xba: UnimplementedInstruction(state);  break;
-        case 0xbb: UnimplementedInstruction(state);  break;
+        case 0xbb: {
+            uint16_t diff = state->a - state->e;
+            state->flags.c = (state->a < state->e);
+            state->flags.z = (state->b == state->a);
+            state->flags.s = ((diff & 0xff00) != 0);
+            state->flags.p = parity(diff, 8);
+        }  break; // CMP E; A - E
         case 0xbc: UnimplementedInstruction(state);  break;
-        case 0xbd: UnimplementedInstruction(state);  break;
+        case 0xbd: {
+            uint16_t diff = state->a - state->l;
+            state->flags.c = (state->a < state->l);
+            state->flags.z = (state->b == state->a);
+            state->flags.s = ((diff & 0xff00) != 0);
+            state->flags.p = parity(diff, 8);
+        }  break; // CMP L; A - L
         case 0xbe: UnimplementedInstruction(state);  break;
         case 0xbf: UnimplementedInstruction(state);  break;
         case 0xc0: UnimplementedInstruction(state);  break;
@@ -430,22 +557,61 @@ void EmulateCPU(CPUState* state) {
             state->flags.p = parity(sum, 8); // implm. this
             state->a = (uint8_t) sum;
             state->pc++;
-        }  break;
+        }  break; // ADI d8; A <- A + d8
         case 0xc7: UnimplementedInstruction(state);  break;
-        case 0xc8: UnimplementedInstruction(state);  break;
+        case 0xc8: {
+            if (state->flags.z == 1)
+                ret(state);
+        }  break; // RZ if zero flag is set, RET
         case 0xc9: {
             state->pc = state->mem[state->sp+1] << 8 | state->mem[state->sp];
             state->sp += 2;
         } break;
-        case 0xca: UnimplementedInstruction(state);  break;
+        case 0xca: {
+            if (state->flags.z)
+                state->pc = returnAddr(opcode);
+            else
+                state->pc += 2;
+        }  break;   // JZ addr; if zero flag set, pc <- adr
         case 0xcc: UnimplementedInstruction(state);  break;
-        case 0xcd: {
+        case 0xcd: 
+        #ifdef FOR_CPUDIAG    
+            if (5 ==  ((opcode[2] << 8) | opcode[1]))    
+            {    
+                if (state->c == 9)    
+                {    
+                    uint16_t offset = (state->d<<8) | (state->e);    
+                    char *str = &state->mem[offset+3];  //skip the prefix bytes    
+                    while (*str != '$')    
+                        printf("%c", *str++);    
+                    printf("\n");    
+                }    
+                else if (state->c == 2)    
+                {    
+                    //saw this in the inspected code, never saw it called    
+                    printf ("print char routine called\n");    
+                }    
+            }    
+            else if (0 ==  ((opcode[2] << 8) | opcode[1]))    
+            {    
+                exit(0);    
+            }    
+            else    
+        #endif    
+        {
             state->mem[state->sp-1] = ((state->pc+2) & 0xff00) >> 8;
             state->mem[state->sp-2] = (state->pc+2) & 0xff;
             state->sp -=2;
             state->pc = opcode[2] << 8 | opcode[1];
-        }  break;
-        case 0xce: UnimplementedInstruction(state);  break;
+        }  break;   // CALL addr
+        case 0xce: { 
+            uint16_t sum = state->a + opcode[1] + state->flags.c;
+            state->flags.z = ((sum & 0xff) == 0);
+            state->flags.c = (sum > 0xff);
+            state->flags.p = parity(sum, 8);
+            state->flags.s = ((sum & 0x80) != 0);
+            state->a = sum & 0xff;
+        }  break; // ACI d8; A <- A + d8 + carry
         case 0xcf: UnimplementedInstruction(state);  break;
         case 0xd0: UnimplementedInstruction(state);  break;
         case 0xd1: {
@@ -453,7 +619,12 @@ void EmulateCPU(CPUState* state) {
             state->d = state->mem[state->sp+1];
             state->sp += 2;
         } break;
-        case 0xd2: UnimplementedInstruction(state);  break;
+        case 0xd2: {
+            if (state->flags.c == 0)
+                state->pc = returnAddr(opcode);
+            else
+                state->pc += 2;
+        }  break; // JNC adr; if carry flags is not set, pc <- adr
         case 0xd3: {
             // write contents of accumulator to device # D8
             state->pc++;
@@ -466,8 +637,13 @@ void EmulateCPU(CPUState* state) {
         } break;
         case 0xd6: UnimplementedInstruction(state);  break;
         case 0xd7: UnimplementedInstruction(state);  break;
-        case 0xd8: UnimplementedInstruction(state);  break;
-        case 0xda: UnimplementedInstruction(state);  break;
+        case 0xd8: UnimplementedInstruction(state);  break; 
+        case 0xda: {
+            if(state->flags.c)
+                state->pc = returnAddr(opcode);
+            else 
+                state->pc += 2;
+        }  break; // JC adr; if carry is 1, pc <- adr
         case 0xdb: UnimplementedInstruction(state);  break;
         case 0xdc: UnimplementedInstruction(state);  break;
         case 0xde: UnimplementedInstruction(state);  break;
@@ -478,8 +654,20 @@ void EmulateCPU(CPUState* state) {
             state->h = state->mem[state->sp+1];
             state->sp += 2;
         } break;
-        case 0xe2: UnimplementedInstruction(state);  break;
-        case 0xe3: UnimplementedInstruction(state);  break;
+        case 0xe2: {
+            if(state->flags.p == 0) 
+                state->pc = returnAddr(opcode);
+            else
+                state->pc += 2;
+        }  break; // JPO addr; if odd parity, pc <- adr 
+        case 0xe3: {
+            uint8_t temp = state->mem[state->sp+1];
+            state->mem[state->sp+1] = state->h;
+            state->h = temp;
+            temp = state->mem[state->sp];
+            state->mem[state->sp] = state->l;
+            state->l = temp;
+        }  break; // XTHL; H <-> (SP+1) L <-> (SP)
         case 0xe4: UnimplementedInstruction(state);  break;
         case 0xe5: {
             state->mem[state->sp-2] = state->l;
@@ -494,11 +682,16 @@ void EmulateCPU(CPUState* state) {
             state->flags.ac = 0;
             state->flags.p = parity(state->a, 8);
             state->pc++;
-        }  break;
+        }  break; // ANI d8; 
         case 0xe7: UnimplementedInstruction(state);  break;
         case 0xe8: UnimplementedInstruction(state);  break;
         case 0xe9: UnimplementedInstruction(state);  break;
-        case 0xea: UnimplementedInstruction(state);  break;
+        case 0xea: {
+            if (state->flags.p)
+                state->pc = returnAddr(opcode);
+            else
+                state->pc += 2;
+        }  break;   // JPE adr; if parity even, pc <- adr
         case 0xeb: {
             uint8_t temp = state->d;
             state->d = state->h;
@@ -521,7 +714,12 @@ void EmulateCPU(CPUState* state) {
             state->a = state->mem[state->sp+1];
             state->sp +=2;
         } break;
-        case 0xf2: {UnimplementedInstruction(state);}  break;
+        case 0xf2: {
+            if (state->flags.s == 0)
+                state->pc = returnAddr(opcode);
+            else
+                state->pc += 2;
+        }  break; // JP adr; if positive (sign bit is 0), pc <- adr
         case 0xf3: UnimplementedInstruction(state);  break;
         case 0xf4: UnimplementedInstruction(state);  break;
         case 0xf5: {
@@ -538,7 +736,12 @@ void EmulateCPU(CPUState* state) {
         case 0xf7: UnimplementedInstruction(state); break;
         case 0xf8: UnimplementedInstruction(state); break;
         case 0xf9: UnimplementedInstruction(state); break;
-        case 0xfa: UnimplementedInstruction(state);  break;
+        case 0xfa: {
+            if (state->flags.s) // if sign flag is set
+                state->pc = opcode[2] << 8 | opcode[1];
+            else
+                state->pc += 2;
+        }  break; // JM adr; if flag s == 1, PC <- adr;
         case 0xfb: state->int_enable = 1; break;
         case 0xfc: UnimplementedInstruction(state);  break;
         case 0xfe: {
@@ -593,10 +796,20 @@ int main(int argc, char** argv) {
     int done = 0;
     CPUState* CPU = initializeCPU();
     
+    /*
     loadFile(CPU, "./rom/invaders.h", 0x0000);
     loadFile(CPU, "./rom/invaders.g", 0x0800);
     loadFile(CPU, "./rom/invaders.f", 0x1000);
-    loadFile(CPU, "./rom/invaders.e", 0x1800);
+    loadFile(CPU, "./rom/invaders.e", 0x1800); 
+    */
+
+    // for testing 
+    loadFile(CPU, "./rom/cpudiag.bin", 0x0100);
+    CPU->pc = 0x100;        // testing starts at 0x100
+    CPU->mem[368] = 0x7;    // fixing bug in asm
+    CPU->mem[0x59c] = 0xc3; // JMP to skip over DAA/ac test
+    CPU->mem[0x59d] = 0xc2;
+    CPU->mem[0x59e] = 0x05;
 
     while (done == 0)
         EmulateCPU(CPU);
