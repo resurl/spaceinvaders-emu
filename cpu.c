@@ -38,19 +38,18 @@ uint8_t parity(int x, int size) {
 }
 
 void printRegs(CPUState* state, uint8_t psw) {
-    printf("\t");
     printf(" af: %02x%02x", state->a, psw);
     printf(" bc: %02x%02x", state->b, state->c);
     printf(" de: %02x%02x", state->d, state->e);
     printf(" hl: %02x%02x", state->h, state->l);
     printf(" pc: %04x", state->pc);
-    printf(" sp: %02x\n", state->sp);
+    printf(" sp: %02x", state->sp);
 }
 
 void printFlags(CPUState* state) {
     printf("    sz0a0p1c: %d%d", state->flags.s, state->flags.z);
-    printf("0A0%d", state->flags.p);
-    printf("1%d\n", state->flags.c);
+    printf("#A#%d", state->flags.p);
+    printf("#%d", state->flags.c);
 }
 
 // adds register value to accumulator, if reg = NULL then it's from memory (HL)
@@ -165,13 +164,13 @@ void EmulateCPU(CPUState* state) {
             uint32_t hl = (state->h) << 8 | state->l;
             uint32_t de = (state->d) << 8 | state->e;
             uint32_t sum = hl + de;
-            state->h = (sum & 0xff) >> 8;
+            state->h = (sum & 0xff00) >> 8;
             state->l =  sum & 0xff;
             state->flags.c = ((sum & 0xffff0000) > 0);
         } // DAD D
             break;
         case 0x1a: {
-            uint16_t addr = state->d << 8 | state->e;
+            uint16_t addr = (state->d << 8) | state->e;
             state->a = state->mem[addr];
         } // LDAX D
             break;
@@ -202,6 +201,7 @@ void EmulateCPU(CPUState* state) {
         case 0x29: {
             uint32_t hl = state->h << 8 | state->l;
             uint32_t sum = hl + hl;
+            printf("sum: %04x", sum);
             state->h = (sum & 0xff00) >> 8;
             state->l = sum & 0xff;
             state->flags.c = ((sum & 0xffff0000) > 1);
@@ -310,7 +310,7 @@ void EmulateCPU(CPUState* state) {
         case 0x76: exit(0); break;
         case 0x77: {
             uint16_t addr = state->h << 8 | state->l;
-            state->mem[addr] = state->a;
+            state->mem[addr] = state->a;    
         } break;
         case 0x78: UnimplementedInstruction(state);  break;
         case 0x79: UnimplementedInstruction(state);  break;
@@ -560,9 +560,9 @@ void EmulateCPU(CPUState* state) {
                     state->flags.s << 4);
     
     // for debugging
-    // printFlags(state);
     printRegs(state, psw);
-    // printf("\n");
+    printFlags(state);
+    printf("\n");
 }
 
 
@@ -597,7 +597,6 @@ int main(int argc, char** argv) {
     loadFile(CPU, "./rom/invaders.g", 0x0800);
     loadFile(CPU, "./rom/invaders.f", 0x1000);
     loadFile(CPU, "./rom/invaders.e", 0x1800);
-    printf("loaded files\n");
 
     while (done == 0)
         EmulateCPU(CPU);
