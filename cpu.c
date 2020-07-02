@@ -79,40 +79,32 @@ void printFlags(CPUState* state) {
     printf("#%d", state->flags.c);
 }
 
-void mvi(uint8_t* reg, unsigned char* opcode) {
+void mvi(CPUState* state, uint8_t* reg, unsigned char* opcode) {
     *reg = opcode[1];
+    state->pc++;
+
+}
+
+uint16_t hl(CPUState* state) {
+    uint16_t hl = state->h << 8 | state->l;
+    return hl;
 }
 
 // adds register value to accumulator, if reg = NULL then it's from memory (HL)
 // should this return the answer instead and CPU handles store to mem?? thinking about coupling b/c of state
 // TODO: testing
-void addOp(uint8_t* reg, CPUState* state) {
-    uint16_t answer = (uint16_t) state->a;
-    //printf("initial a val: %d", answer);
-
-    if (reg == NULL) {
-        uint16_t* m = (uint16_t*) (state->h << 8 | state->l);
-        //printf("m addr: %d, m val: %d", m, *m);
-        answer += *m;
-        //printf("answer: %d", answer);
-        //free(m); // i think this is ok LOL
-    } else {
-        //printf("m addr: %d, m val: %d", reg, *reg);
-        answer += (uint16_t) *reg;
-        //printf("answer: %d", answer);
-    }
-
+void add(CPUState* state, uint8_t regval) {
+    uint16_t answer = (uint16_t) state->a + (uint16_t) regval;
     state->flags.z = ((answer & 0xff) == 0);
     state->flags.s = ((answer & 0x80) != 0);
     state->flags.c = (answer > 0xff);
     state->flags.p = parity(answer, 8);
     state->a = answer & 0xff;
-
     //printf("reg a val: %d", state->a);
 }
 
-void adcOp(uint8_t* reg, CPUState* state) {
-    uint16_t sum = (uint16_t) state->a + (uint16_t) *reg + state->flags.c;
+void adc(CPUState* state, uint8_t regval) {
+    uint16_t sum = (uint16_t) state->a + (uint16_t) regval + state->flags.c;
     state->flags.z = ((sum & 0xff) == 0);
     state->flags.c = (sum > 0xff);
     state->flags.p = parity(sum, 8);
@@ -120,15 +112,55 @@ void adcOp(uint8_t* reg, CPUState* state) {
     state->a = sum & 0xff;
 }
 
-void subOp(uint8_t* reg, CPUState* state) {
-    uint16_t diff = (uint16_t) state->a - (uint16_t) *reg;
+void sub(CPUState* state, uint8_t regval) {
+    uint16_t diff = (uint16_t) state->a - (uint16_t) regval;
     state->flags.z = (diff & 0xff) == 0;
     state->flags.c = (diff > 0xff);
-    state->flags.s = (diff & 0x80 != 0);
+    state->flags.s = ((diff & 0x80) == 0x80);
     state->flags.p = parity(diff, 8);
     state->a = diff & 0xff;
 }
 
+void sbb(CPUState* state, uint8_t regval) {
+    uint16_t diff = (uint16_t) state->a - (uint16_t) regval - state->flags.c;
+    state->flags.z = (diff & 0xff) == 0;
+    state->flags.c = (diff > 0xff);
+    state->flags.s = ((diff & 0x80) == 0x80);
+    state->flags.p = parity(diff, 8);
+    state->a = diff & 0xff;
+}
+
+void ana(CPUState* state, uint8_t regval) {
+    state->a = state->a & regval;
+    state->flags.c = 0;
+    state->flags.z = state->a == 0;
+    state->flags.s = (state->a & 0x80) == 0x80;
+    state->flags.p = parity(state->a,8);
+}
+
+void ora(CPUState* state, uint8_t regval) {
+    state->a = state->a | regval;
+    state->flags.c = 0;
+    state->flags.z = state->a == 0;
+    state->flags.s = (state->a & 0x80) == 0x80;
+    state->flags.p = parity(state->a,8);
+}
+
+void xra(CPUState* state, uint8_t regval) {
+    state->a = state->a ^ regval;
+    state->flags.z = (state->a == 0); 
+    state->flags.c = 0;
+    state->flags.s = ((state->a & 0x80) == 0x80);
+    state->flags.p = parity(state->a, 8);
+}
+
+void cmp(CPUState* state, uint8_t regval) {
+    uint16_t diff = state->a - regval;
+    state->flags.s = regval > state->a;
+    state->flags.z = regval == state->a;
+    state->flags.c = ((diff & 0xff00) > 0xff);
+    state->flags.p = parity(diff,8);
+}
 // assuming reg is valid pointer to register value
 // for space invaders, only have to implement for b and c regs, also don't have to handle ac (yet?)
 void dcr(uint8_t* reg, CPUState* state) {
@@ -159,8 +191,8 @@ void inr(CPUState* state, uint8_t* reg) {
      state->flags.p = parity(*reg, 8);
 }
 
-void mov(uint8_t* reg1, uint8_t* reg2) {
-    *reg1 = *reg2;
+void mov(uint8_t* reg1, uint8_t regval) {
+    *reg1 = regval;
 }
 
 void EmulateCPU(CPUState* state) {
@@ -189,11 +221,7 @@ void EmulateCPU(CPUState* state) {
             updateAllFlags(state->b, state);        // !!! check this 
         } break;                                    // INR B; B <- B + 1
         case 0x05: dcr(&state->b, state); break;  // dec B by 1
-        case 0x06: {
-            state->b = opcode[1];
-            state->pc++;
-        }                                           // MVI B, D8 B <- mem[pc+1]
-            break;
+        case 0x06: mvi(state,&state->b,opcode); break; // MVI B, D8 B <- mem[pc+1]
         case 0x07: {
             uint8_t msb = state->a & 0x80;
             state->a = (state->a << 1) & 0xfe | msb;
@@ -241,7 +269,7 @@ void EmulateCPU(CPUState* state) {
             break;
         case 0x14: inr(state,&state->d); break; // INR D; D = D+1
         case 0x15: dcr(&state->d, state); break; // DCR D
-        case 0x16: mvi(&state->d, opcode); break; // MVI D,D8
+        case 0x16: mvi(state, &state->d, opcode); break; // MVI D,D8
         case 0x17: UnimplementedInstruction(state);  break;
         case 0x19: {
             uint32_t hl = (state->h) << 8 | state->l;
@@ -260,7 +288,7 @@ void EmulateCPU(CPUState* state) {
         case 0x1b: UnimplementedInstruction(state);  break; 
         case 0x1c: inr(state, &state->e); break; // INR E
         case 0x1d: dcr(&state->e, state); break; // DCR E
-        case 0x1e: mvi(&state->e, opcode); break; // MVI E,D8
+        case 0x1e: mvi(state, &state->e, opcode); break; // MVI E,D8
         case 0x1f: UnimplementedInstruction(state);  break;
         case 0x21: {
             state->h = opcode[2];
@@ -292,7 +320,7 @@ void EmulateCPU(CPUState* state) {
         case 0x2b: UnimplementedInstruction(state);  break;
         case 0x2c: inr(state, &state->l); break; // INR L
         case 0x2d: dcr(&state->l, state); break; // DCR L
-        case 0x2e: mvi(&state->l, opcode); break; // MVI L,D8
+        case 0x2e: mvi(state, &state->l, opcode); break; // MVI L,D8
         case 0x2f: UnimplementedInstruction(state);  break;
         case 0x31: {
             state->sp = opcode[2] << 8 | opcode[1];
@@ -304,8 +332,8 @@ void EmulateCPU(CPUState* state) {
             state->pc += 2;
         }  break; // STA adr; (adr) = A
         case 0x33: UnimplementedInstruction(state);  break;
-        case 0x34: UnimplementedInstruction(state);  break;
-        case 0x35: UnimplementedInstruction(state);  break;
+        case 0x34: inr(state, &state->mem[hl(state)]);  break;
+        case 0x35: dcr(&state->mem[hl(state)], state);  break;
         case 0x36: {
             uint16_t addr = state->h << 8 | state->l;
             state->mem[addr] = opcode[1];
@@ -321,83 +349,76 @@ void EmulateCPU(CPUState* state) {
         case 0x3b: UnimplementedInstruction(state);  break;
         case 0x3c: inr(state, &state->a); break; // INR A; 
         case 0x3d: dcr(&state->a, state);  break; // DCR A;
-        case 0x3e: {
-            state->a = opcode[1];
-            state->pc++;
-        }  break; // MVI A, D8
+        case 0x3e: mvi(state, &state->a, opcode); break; // MVI A, D8
         case 0x3f: state->flags.c = !state->flags.c; break; // CMC; CY=!Cy
-        case 0x40: mov(&state->b, &state->b);  break; // MOV B,B
-        case 0x41: mov(&state->b, &state->c);  break; // MOV B,C
-        case 0x42: mov(&state->b, &state->d);  break; // MOV B,D
-        case 0x43: mov(&state->b, &state->e);  break; // MOV B,E
-        case 0x44: mov(&state->b, &state->h);  break; // MOV B,H
-        case 0x45: mov(&state->b, &state->l);  break; // MOV B,L
-        case 0x46: {
-            UnimplementedInstruction(state);
-        }  break; // MOV B,(HL)
-        case 0x47: mov(&state->b, &state->a); break; // MOV B,A; B <- A
-        case 0x48: mov(&state->c, &state->b); break; // MOV C,B
-        case 0x49: mov(&state->c, &state->c);  break; // MOV C,C
-        case 0x4a: mov(&state->c, &state->d);  break; // MOV C,D
-        case 0x4b: mov(&state->c, &state->e);  break; // MOV C,E
-        case 0x4c: mov(&state->c, &state->h);  break; // MOV C,H
-        case 0x4d: mov(&state->c, &state->l);  break; // MOV C,L
-        case 0x4e: {
-            UnimplementedInstruction(state);
-        }  break; // MOV C,(HL)
-        case 0x4f: mov(&state->c, &state->a);  break; // MOV C,A
-        case 0x50: mov(&state->d, &state->b);  break; // MOV D,B
-        case 0x51: mov(&state->d, &state->c);  break; // MOV D,C
-        case 0x52: mov(&state->d, &state->d);  break; // MOV D,D
-        case 0x53: mov(&state->d, &state->e);  break; // MOV D,E
-        case 0x54: mov(&state->d, &state->h);  break; // MOV D,H
-        case 0x55: mov(&state->d, &state->l);  break; // MOV D,L
+        case 0x40: mov(&state->b, state->b);  break; // MOV B,B
+        case 0x41: mov(&state->b, state->c);  break; // MOV B,C
+        case 0x42: mov(&state->b, state->d);  break; // MOV B,D
+        case 0x43: mov(&state->b, state->e);  break; // MOV B,E
+        case 0x44: mov(&state->b, state->h);  break; // MOV B,H
+        case 0x45: mov(&state->b, state->l);  break; // MOV B,L
+        case 0x46: mov(&state->b, state->mem[hl(state)]); break; // MOV B,(HL)
+        case 0x47: mov(&state->b, state->a); break; // MOV B,A; B <- A
+        case 0x48: mov(&state->c, state->b); break; // MOV C,B
+        case 0x49: mov(&state->c, state->c);  break; // MOV C,C
+        case 0x4a: mov(&state->c, state->d);  break; // MOV C,D
+        case 0x4b: mov(&state->c, state->e);  break; // MOV C,E
+        case 0x4c: mov(&state->c, state->h);  break; // MOV C,H
+        case 0x4d: mov(&state->c, state->l);  break; // MOV C,L
+        case 0x4e: mov(&state->c, state->mem[hl(state)]);  break; // MOV C,(HL)
+        case 0x4f: mov(&state->c, state->a);  break; // MOV C,A
+        case 0x50: mov(&state->d, state->b);  break; // MOV D,B
+        case 0x51: mov(&state->d, state->c);  break; // MOV D,C
+        case 0x52: mov(&state->d, state->d);  break; // MOV D,D
+        case 0x53: mov(&state->d, state->e);  break; // MOV D,E
+        case 0x54: mov(&state->d, state->h);  break; // MOV D,H
+        case 0x55: mov(&state->d, state->l);  break; // MOV D,L
         case 0x56: {
             uint16_t addr = state->h << 8 | state->l;
             state->d = state->mem[addr];
         } break; // MOV D,(HL)
-        case 0x57: mov(&state->d, &state->a);  break; // MOV D,A
-        case 0x58: mov(&state->e, &state->b);  break; // MOV E,B
-        case 0x59: mov(&state->e, &state->c);  break; // MOV E,C 
-        case 0x5a: mov(&state->e, &state->d);  break; // MOV E,D
-        case 0x5b: mov(&state->e, &state->e);  break; // MOV E,E
-        case 0x5c: mov(&state->e, &state->h);  break; // MOV E,H
-        case 0x5d: mov(&state->e, &state->l);  break; // MOB E,L
+        case 0x57: mov(&state->d, state->a);  break; // MOV D,A
+        case 0x58: mov(&state->e, state->b);  break; // MOV E,B
+        case 0x59: mov(&state->e, state->c);  break; // MOV E,C 
+        case 0x5a: mov(&state->e, state->d);  break; // MOV E,D
+        case 0x5b: mov(&state->e, state->e);  break; // MOV E,E
+        case 0x5c: mov(&state->e, state->h);  break; // MOV E,H
+        case 0x5d: mov(&state->e, state->l);  break; // MOB E,L
         case 0x5e: {
             uint16_t addr = state->h << 8 | state->l;
             state->e = state->mem[addr];
         } break; // MOV E,(HL)
-        case 0x5f: mov(&state->e, &state->a);  break; // MOV E,A
-        case 0x60: mov(&state->h, &state->b);  break; // MOV H,B
-        case 0x61: mov(&state->h, &state->c);  break; // MOV H,C
-        case 0x62: mov(&state->h, &state->d);  break; // MOV H,D
-        case 0x63: mov(&state->h, &state->e);  break; // MOV H,E
-        case 0x64: mov(&state->h, &state->h);  break; // MOV H,H; H <- H
-        case 0x65: mov(&state->h, &state->l);  break; // MOV H,L
+        case 0x5f: mov(&state->e, state->a);  break; // MOV E,A
+        case 0x60: mov(&state->h, state->b);  break; // MOV H,B
+        case 0x61: mov(&state->h, state->c);  break; // MOV H,C
+        case 0x62: mov(&state->h, state->d);  break; // MOV H,D
+        case 0x63: mov(&state->h, state->e);  break; // MOV H,E
+        case 0x64: mov(&state->h, state->h);  break; // MOV H,H; H <- H
+        case 0x65: mov(&state->h, state->l);  break; // MOV H,L
         case 0x66: {
             uint16_t addr = state->h << 8 | state->l;
             state->h = state->mem[addr];
         } break; // MOV H,(HL)
-        case 0x67: mov(&state->h, &state->a);  break; // MOV H,A
+        case 0x67: mov(&state->h, state->a);  break; // MOV H,A
         case 0x68: {
             state->l = state->b;
         }  break; // MOV L,B; L <- B
-        case 0x69: mov(&state->l, &state->c);  break; // MOV L,C
+        case 0x69: mov(&state->l, state->c);  break; // MOV L,C
         case 0x6a: {
             state->l = state->d;
         }  break; // MOV L,D; L <- D
-        case 0x6b: mov(&state->l, &state->e);  break; // MOV L,E
-        case 0x6c: mov(&state->l, &state->h);  break; // MOV L,H
-        case 0x6d: mov(&state->l, &state->l);  break; // MOV L,L
+        case 0x6b: mov(&state->l, state->e);  break; // MOV L,E
+        case 0x6c: mov(&state->l, state->h);  break; // MOV L,H
+        case 0x6d: mov(&state->l, state->l);  break; // MOV L,L
         case 0x6e: {
             uint16_t addr = state->h << 8 | state->l;
             state->l = state->mem[addr];
         }  break; // MOV L, M; L <- (HL)
-        case 0x6f: mov(&state->l,&state->a); break; // MOV L,A
-        case 0x70: UnimplementedInstruction(state);  break; // MOV (HL),B
-        case 0x71: UnimplementedInstruction(state);  break; // MOV (HL),C
-        case 0x72: UnimplementedInstruction(state);  break; // MOV (HL),D
-        case 0x73: UnimplementedInstruction(state);  break; // MOV (HL),E
+        case 0x6f: mov(&state->l,state->a); break; // MOV L,A
+        case 0x70: mov(&state->mem[hl(state)], state->b); break; // MOV (HL),B
+        case 0x71: mov(&state->mem[hl(state)], state->c);  break; // MOV (HL),C
+        case 0x72: mov(&state->mem[hl(state)], state->d);  break; // MOV (HL),D
+        case 0x73: mov(&state->mem[hl(state)], state->e);  break; // MOV (HL),E
         case 0x74: {
             uint16_t addr = state->h << 8 | state->l;
             state->mem[addr] = state->h;
@@ -412,118 +433,78 @@ void EmulateCPU(CPUState* state) {
             state->mem[addr] = state->a;    
         } break;
         case 0x78: state->a = state->b;  break;
-        case 0x79: mov(&state->a, &state->c);  break;
+        case 0x79: mov(&state->a, state->c);  break;
         case 0x7a: state->a = state->d; break;
         case 0x7b: state->a = state->e; break;
         case 0x7c: state->a = state->h; break;
-        case 0x7d: mov(&state->a, &state->l);  break;
+        case 0x7d: mov(&state->a, state->l);  break;
         case 0x7e: {
             uint16_t addr = state->h << 8 | state->l;
             state->a = state->mem[addr];
         } break;
-        case 0x7f: mov(&state->a, &state->a);  break;
-        case 0x80: addOp(&state->b, state); break;
-        case 0x81: addOp(&state->c, state); break;
-        case 0x82: addOp(&state->d, state); break;
-        case 0x83: addOp(&state->e, state); break;
-        case 0x84: addOp(&state->h, state); break;
-        case 0x85: addOp(&state->l, state); break;
-        case 0x86: addOp(NULL, state); break;
-        case 0x87: addOp(&state->a, state); break;
-        case 0x88: UnimplementedInstruction(state);  break;
-        case 0x89: adcOp(&state->c, state);  break;
-        case 0x8a: UnimplementedInstruction(state);  break;
-        case 0x8b: UnimplementedInstruction(state);  break;
-        case 0x8c: UnimplementedInstruction(state);  break;
-        case 0x8d: UnimplementedInstruction(state);  break;
-        case 0x8e: UnimplementedInstruction(state);  break;
-        case 0x8f: UnimplementedInstruction(state);  break;
-        case 0x90: UnimplementedInstruction(state);  break;
-        case 0x91: UnimplementedInstruction(state);  break;
-        case 0x92: UnimplementedInstruction(state);  break;
-        case 0x93: UnimplementedInstruction(state);  break;
-        case 0x94: {
-            uint16_t diff = (uint16_t) state->a - (uint16_t) state->h;
-            state->flags.z = (diff & 0xff) == 0;
-            state->flags.c = (diff > 0xff);
-            state->flags.s = (diff & 0x80 != 0);
+        case 0x7f: mov(&state->a, state->a);  break;
+        case 0x80: add(state, state->b); break;
+        case 0x81: add(state, state->c); break;
+        case 0x82: add(state, state->d); break;
+        case 0x83: add(state, state->e); break;
+        case 0x84: add(state, state->h); break;
+        case 0x85: add(state, state->l); break;
+        case 0x86: add(state, state->mem[hl(state)]); break;
+        case 0x87: add(state, state->a); break;
+        case 0x88: adc(state, state->b); break; // ADC B
+        case 0x89: adc(state, state->c);  break; // ADC C
+        case 0x8a: adc(state, state->d);  break; // ADC D
+        case 0x8b: adc(state, state->e); break; // ADC E
+        case 0x8c: adc(state, state->h); break; // ADC H
+        case 0x8d: adc(state, state->l);  break; // ADC L
+        case 0x8e: adc(state, state->mem[hl(state)]);  break; // ADC (HL)
+        case 0x8f: adc(state, state->a);  break; // ADC A
+        case 0x90: sub(state, state->b); break; // SUB B
+        case 0x91: sub(state, state->c);  break; // SUB C
+        case 0x92: sub(state, state->d);  break; // SUB D
+        case 0x93: sub(state, state->e);  break; // SUB E;
+        case 0x94: sub(state, state->h); break; // SUB H; A <- A - H
+        case 0x95: sub(state, state->l);  break; // SUB L
+        case 0x96: {
+            uint8_t hl = state->mem[state->h << 8 | state->l];
+            uint16_t diff = state->a - hl;
+            state->flags.z = diff == 0;
+            state->flags.s = ((diff & 0x80) == 0x80);
+            state->flags.c = ((diff & 0xff00) != 0);
             state->flags.p = parity(diff, 8);
-            state->a = diff & 0xff;
-        }  break; // SUB H; A <- A - H
-        case 0x95: UnimplementedInstruction(state);  break;
-        case 0x96: UnimplementedInstruction(state);  break;
-        case 0x97: subOp(&state->a,state); break; // SUB A; A <- A - A
-        case 0x98: UnimplementedInstruction(state);  break;
-        case 0x99: UnimplementedInstruction(state);  break;
-        case 0x9a: UnimplementedInstruction(state);  break;
-        case 0x9b: UnimplementedInstruction(state);  break;
-        case 0x9c: UnimplementedInstruction(state);  break;
-        case 0x9d: UnimplementedInstruction(state);  break;
-        case 0x9e: UnimplementedInstruction(state);  break;
-        case 0x9f: UnimplementedInstruction(state);  break;
-        case 0xa0: UnimplementedInstruction(state);  break;
-        case 0xa1: UnimplementedInstruction(state);  break;
-        case 0xa2: UnimplementedInstruction(state);  break;
-        case 0xa3: UnimplementedInstruction(state);  break;
-        case 0xa4: UnimplementedInstruction(state);  break;
-        case 0xa5: UnimplementedInstruction(state);  break;
-        case 0xa6: UnimplementedInstruction(state);  break;
-        case 0xa7: {
-            state->a = state->a & state->a;
-            state->flags.z = (state->a == 0); 
-            state->flags.c = 0;
-            state->flags.ac = 0;
-            state->flags.s = ((state->a & 0x80) == 0x80);
-            state->flags.p = parity(state->a, 8); // implm. this
-        } break;
-        case 0xa8: {
-            state->a = state->a ^ state->b;
-            state->flags.z = (state->a == 0); 
-            state->flags.c = 0;
-            state->flags.ac = 0;
-            state->flags.s = ((state->a & 0x80) == 0x80);
-            state->flags.p = parity(state->a, 8);
-        }  break; // XRA B; 
-        case 0xa9: UnimplementedInstruction(state);  break;
-        case 0xaa: UnimplementedInstruction(state);  break;
-        case 0xab: UnimplementedInstruction(state);  break;
-        case 0xac: UnimplementedInstruction(state);  break;
-        case 0xad: {
-            state->a = state->a ^ state->l;
-            state->flags.z = (state->a == 0); 
-            state->flags.c = 0;
-            state->flags.ac = 0;
-            state->flags.s = ((state->a & 0x80) == 0x80);
-            state->flags.p = parity(state->a, 8);
-        }  break; // XRA L; A <- A ^ L
-        case 0xae: UnimplementedInstruction(state);  break;
-        case 0xaf: {
-            state->a = state->a ^ state->a;
-            state->flags.z = (state->a == 0); 
-            state->flags.c = 0;
-            state->flags.ac = 0;
-            state->flags.s = ((state->a & 0x80) == 0x80);
-            state->flags.p = parity(state->a, 8);
-        } break;
-        case 0xb0: UnimplementedInstruction(state);  break;
-        case 0xb1: {
-            state->a = state->a | state->c;
-            state->flags.z = (state->a == 0);
-            state->flags.p = parity(state->a, 8);
-            state->flags.s = ((state->a & 0x80) != 0);
-            state->flags.c = 0;
+            state->a = diff & 0x80;
         }  break;
-        case 0xb2: UnimplementedInstruction(state);  break;
-        case 0xb3: UnimplementedInstruction(state);  break;
-        case 0xb4: UnimplementedInstruction(state);  break;
-        case 0xb5: {
-            state->a = state->a | state->l;
-            state->flags.z = (state->a == 0);
-            state->flags.p = parity(state->a, 8);
-            state->flags.s = ((state->a & 0x80) != 0);
-            state->flags.c = 0;
-            //UnimplementedInstruction(state);
-        }  break; // ORA L; A <- A | L
+        case 0x97: sub(state, state->a); break; // SUB A; A <- A - A
+        case 0x98: sbb(state, state->b); break; // SBB B
+        case 0x99: sbb(state, state->c);  break; // SBB C
+        case 0x9a: sbb(state, state->d);  break; // SBB D
+        case 0x9b: sbb(state, state->e);  break; // SBB E
+        case 0x9c: sbb(state, state->h);  break; // SBB H
+        case 0x9d: sbb(state, state->l);  break; // SBB L
+        case 0x9e: sbb(state, state->mem[hl(state)]); break; // SBB (HL)
+        case 0x9f: sbb(state, state->a);  break; // SBB A
+        case 0xa0: ana(state, state->b); break; // ANA B
+        case 0xa1: ana(state, state->c); break; // ANA C
+        case 0xa2: ana(state, state->d); break;
+        case 0xa3: ana(state, state->e); break;
+        case 0xa4: ana(state, state->h); break;
+        case 0xa5: ana(state, state->l); break;
+        case 0xa6: ana(state, state->mem[hl(state)]);  break;
+        case 0xa7: ana(state, state->a); break;
+        case 0xa8: xra(state, state->b); break;
+        case 0xa9: xra(state, state->c);  break;
+        case 0xaa: xra(state, state->d);  break;
+        case 0xab: xra(state, state->e);  break;
+        case 0xac: xra(state, state->h);  break;
+        case 0xad: xra(state, state->l);  break; // XRA L; A <- A ^ L
+        case 0xae: xra(state, state->mem[hl(state)]);  break;
+        case 0xaf: xra(state, state->a);  break;
+        case 0xb0: ora(state, state->b); break;
+        case 0xb1: ora(state, state->c);  break;
+        case 0xb2: ora(state, state->d);  break;
+        case 0xb3: ora(state, state->e);  break;
+        case 0xb4: ora(state, state->h);  break;
+        case 0xb5: ora(state, state->l);  break; // ORA L; A <- A | L
         case 0xb6: {
             uint16_t addr = state->h << 8 | state->l;
             state->a = state->a | state->mem[addr];
@@ -532,34 +513,15 @@ void EmulateCPU(CPUState* state) {
             state->flags.s = ((state->a & 0x80) != 0);
             state->flags.c = 0;
         }  break; // ORA M; A <- A | (HL)
-        case 0xb7: UnimplementedInstruction(state);  break;
-        case 0xb8: {
-            uint16_t diff = state->a - state->b;
-            state->flags.c = (state->a < state->b);
-            state->flags.z = (state->b == state->a);
-            state->flags.s = ((diff & 0xff00) != 0);
-            state->flags.p = parity(diff, 8);
-            //UnimplementedInstruction(state);
-        }  break; // CMP B; A - B
-        case 0xb9: UnimplementedInstruction(state);  break;
-        case 0xba: UnimplementedInstruction(state);  break;
-        case 0xbb: {
-            uint16_t diff = state->a - state->e;
-            state->flags.c = (state->a < state->e);
-            state->flags.z = (state->b == state->a);
-            state->flags.s = ((diff & 0xff00) != 0);
-            state->flags.p = parity(diff, 8);
-        }  break; // CMP E; A - E
-        case 0xbc: UnimplementedInstruction(state);  break;
-        case 0xbd: {
-            uint16_t diff = state->a - state->l;
-            state->flags.c = (state->a < state->l);
-            state->flags.z = (state->b == state->a);
-            state->flags.s = ((diff & 0xff00) != 0);
-            state->flags.p = parity(diff, 8);
-        }  break; // CMP L; A - L
-        case 0xbe: UnimplementedInstruction(state);  break;
-        case 0xbf: UnimplementedInstruction(state);  break;
+        case 0xb7: ora(state, state->a);  break;
+        case 0xb8: cmp(state, state->b); break; // CMP B; A - B
+        case 0xb9: cmp(state, state->c); break;
+        case 0xba: cmp(state, state->d); break;
+        case 0xbb: cmp(state, state->e);  break; // CMP E; A - E
+        case 0xbc: cmp(state, state->h);  break;
+        case 0xbd: cmp(state, state->l);  break; // CMP L; A - L
+        case 0xbe: cmp(state, state->mem[hl(state)]);  break;
+        case 0xbf: cmp(state, state->a);  break;
         case 0xc0: ret(state, !state->flags.z); break; // RNZ; if zero bit unset, return
         case 0xc1: {
             state->c = state->mem[state->sp];
