@@ -36,7 +36,30 @@ uint8_t parity(int x, int size) {
         if(x & 1) par++;
         x = x >> 1;
     }
+    printf("%d", par);
     return (0 == (par&1));
+}
+
+uint16_t returnAddr(unsigned char* opcode) {
+    return (opcode[2] << 8 | opcode[1]);
+}
+
+void ret(CPUState* state, int res) {
+    if (res) {
+        state->pc = (state->mem[state->sp] << 8) | state->mem[state->sp+1];
+        state->sp += 2;
+    } 
+}
+
+void call(CPUState* state, int res, unsigned char* op) {
+    if (res) {
+        state->mem[state->sp-1] = (state->pc >> 8);
+        state->mem[state->sp-2] = (state->pc & 0xff);
+        state->sp += 2;
+        state->pc = returnAddr(op);
+    } else {
+        state->pc += 2;
+    }
 }
 
 void printRegs(CPUState* state, uint8_t psw) {
@@ -49,19 +72,9 @@ void printRegs(CPUState* state, uint8_t psw) {
 }
 
 void printFlags(CPUState* state) {
-    printf("    sz0a0p1c: %d%d", state->flags.s, state->flags.z);
-    printf("#A#%d", state->flags.p);
+    printf("    sz###p#c: %d%d", state->flags.s, state->flags.z);
+    printf("###%d", state->flags.p);
     printf("#%d", state->flags.c);
-}
-
-uint16_t returnAddr(unsigned char* opcode) {
-    return (opcode[2] << 8 | opcode[1]);
-}
-
-
-void ret(CPUState* state) {
-    state->pc = state->mem[state->sp+1] << 8 | state->mem[state->sp];
-    state->sp += 2;
 }
 
 // adds register value to accumulator, if reg = NULL then it's from memory (HL)
@@ -267,12 +280,12 @@ void EmulateCPU(CPUState* state) {
         case 0x31: {
             state->sp = opcode[2] << 8 | opcode[1];
             state->pc += 2;     
-        }  break; // SP = stack pointer, special reg
+        }  break; // LXI SP, D16; SP = d16
         case 0x32: {
             uint16_t addr = opcode[2] << 8 | opcode[1];
             state->mem[addr] = state->a;
             state->pc += 2;
-        }  break;
+        }  break; // STA adr; (adr) = A
         case 0x33: UnimplementedInstruction(state);  break;
         case 0x34: UnimplementedInstruction(state);  break;
         case 0x35: UnimplementedInstruction(state);  break;
@@ -528,7 +541,7 @@ void EmulateCPU(CPUState* state) {
         }  break; // CMP L; A - L
         case 0xbe: UnimplementedInstruction(state);  break;
         case 0xbf: UnimplementedInstruction(state);  break;
-        case 0xc0: UnimplementedInstruction(state);  break;
+        case 0xc0: ret(state, !state->flags.z); break; // RNZ; if zero bit unset, return
         case 0xc1: {
             state->c = state->mem[state->sp];
             state->b = state->mem[state->sp + 1];
@@ -543,7 +556,7 @@ void EmulateCPU(CPUState* state) {
         case 0xc3: {
             state->pc = opcode[2] << 8 | opcode[1];
         }  break;
-        case 0xc4: UnimplementedInstruction(state);  break;
+        case 0xc4: call(state, !state->flags.z,opcode); break; // CNZ adr; if not zero, call addr
         case 0xc5: {
             state->mem[state->sp-2] = state->c;
             state->mem[state->sp-1] = state->b;
@@ -559,10 +572,7 @@ void EmulateCPU(CPUState* state) {
             state->pc++;
         }  break; // ADI d8; A <- A + d8
         case 0xc7: UnimplementedInstruction(state);  break;
-        case 0xc8: {
-            if (state->flags.z == 1)
-                ret(state);
-        }  break; // RZ if zero flag is set, RET
+        case 0xc8: ret(state, state->flags.z);  break; // RZ if zero flag is set, RET
         case 0xc9: {
             state->pc = state->mem[state->sp+1] << 8 | state->mem[state->sp];
             state->sp += 2;
@@ -573,7 +583,7 @@ void EmulateCPU(CPUState* state) {
             else
                 state->pc += 2;
         }  break;   // JZ addr; if zero flag set, pc <- adr
-        case 0xcc: UnimplementedInstruction(state);  break;
+        case 0xcc: call(state, state->flags.z, opcode); break; // CZ adr; if zero flag set (1), call adr
         case 0xcd: 
         #ifdef FOR_CPUDIAG    
             if (5 ==  ((opcode[2] << 8) | opcode[1]))    
@@ -611,9 +621,12 @@ void EmulateCPU(CPUState* state) {
             state->flags.p = parity(sum, 8);
             state->flags.s = ((sum & 0x80) != 0);
             state->a = sum & 0xff;
+            state->pc++;
         }  break; // ACI d8; A <- A + d8 + carry
         case 0xcf: UnimplementedInstruction(state);  break;
-        case 0xd0: UnimplementedInstruction(state);  break;
+        case 0xd0: {
+            ret(state, !state->flags.c); 
+        }  break; // RNC; if carry bit unset, return
         case 0xd1: {
             state->e = state->mem[state->sp];
             state->d = state->mem[state->sp+1];
@@ -629,15 +642,25 @@ void EmulateCPU(CPUState* state) {
             // write contents of accumulator to device # D8
             state->pc++;
         }  break; // OUT D8
-        case 0xd4: UnimplementedInstruction(state);  break;
+        case 0xd4: call(state, !state->flags.c, opcode); break; // if no carry (carry=0), call addr
         case 0xd5: {
             state->mem[state->sp-2] = state->e;
             state->mem[state->sp-1] = state->d;
             state->sp -= 2;
         } break;
-        case 0xd6: UnimplementedInstruction(state);  break;
+        case 0xd6: {
+            uint16_t diff = state->a - opcode[1];
+            state->flags.c = (opcode[1] > state->a);
+            state->flags.p = parity(diff, 8);
+            state->flags.z = (diff == 0);
+            state->flags.s = ((diff & 0x80) == 0x80); 
+            state->a = diff & 0xff;
+            state->pc++; 
+        }  break; // SUI d8; A = A - d8
         case 0xd7: UnimplementedInstruction(state);  break;
-        case 0xd8: UnimplementedInstruction(state);  break; 
+        case 0xd8: {
+            ret(state, state->flags.c);
+        }  break; // RC; if carry bit set, return
         case 0xda: {
             if(state->flags.c)
                 state->pc = returnAddr(opcode);
@@ -645,10 +668,20 @@ void EmulateCPU(CPUState* state) {
                 state->pc += 2;
         }  break; // JC adr; if carry is 1, pc <- adr
         case 0xdb: UnimplementedInstruction(state);  break;
-        case 0xdc: UnimplementedInstruction(state);  break;
-        case 0xde: UnimplementedInstruction(state);  break;
+        case 0xdc: call(state, state->flags.c, opcode); break; // if carry, call adr 
+        case 0xde: {
+            uint16_t diff = state->a - opcode[1] - state->flags.c;
+            state->flags.c = (opcode[1] > state->a);
+            state->flags.p = parity(diff, 8);
+            state->flags.z = (diff == 0);
+            state->flags.s = ((diff & 0x80) == 0x80); 
+            state->pc++;
+            state->a = diff & 0xff;
+        }  break; // SBI D8; A = A - D8 - carry flag
         case 0xdf: UnimplementedInstruction(state);  break;
-        case 0xe0: UnimplementedInstruction(state);  break;
+        case 0xe0: {
+            ret(state, !state->flags.p);
+        }  break; // RPO; if odd parity, return 
         case 0xe1: {
             state->l = state->mem[state->sp];
             state->h = state->mem[state->sp+1];
@@ -668,7 +701,9 @@ void EmulateCPU(CPUState* state) {
             state->mem[state->sp] = state->l;
             state->l = temp;
         }  break; // XTHL; H <-> (SP+1) L <-> (SP)
-        case 0xe4: UnimplementedInstruction(state);  break;
+        case 0xe4: {
+            call(state, !state->flags.p, opcode);
+        }  break; // CPO adr; if parity odd (0), call adr
         case 0xe5: {
             state->mem[state->sp-2] = state->l;
             state->mem[state->sp-1] = state->h;
@@ -684,7 +719,9 @@ void EmulateCPU(CPUState* state) {
             state->pc++;
         }  break; // ANI d8; 
         case 0xe7: UnimplementedInstruction(state);  break;
-        case 0xe8: UnimplementedInstruction(state);  break;
+        case 0xe8: {
+            ret(state, state->flags.p);
+        }  break; // RPE; if even parity (1), return
         case 0xe9: UnimplementedInstruction(state);  break;
         case 0xea: {
             if (state->flags.p)
@@ -700,10 +737,21 @@ void EmulateCPU(CPUState* state) {
             state->e = state->l;
             state->l = temp;
         } break;
-        case 0xec: UnimplementedInstruction(state);  break;
-        case 0xee: UnimplementedInstruction(state);  break;
+        case 0xec: {
+            call(state, state->flags.p, opcode);
+        }  break; // CPE adr; if even parity (1) call adr
+        case 0xee: {
+            state->a = state->a ^ opcode[1];
+            state->flags.z = (state->a == 0);
+            state->flags.c = 0;
+            state->flags.p = parity(state->a, 8);
+            state->flags.s = (state->a & 0x80) == 0x80;
+            state->pc++; 
+        }  break; // XRI D8; A = A^D8
         case 0xef: UnimplementedInstruction(state);  break;
-        case 0xf0: UnimplementedInstruction(state);  break;
+        case 0xf0: {
+            ret(state, !state->flags.s);
+        }  break; // RP; if pos (s=0), return
         case 0xf1: {
             int8_t spVal = state->mem[state->sp];
             state->flags.c = spVal & 1;
@@ -721,7 +769,7 @@ void EmulateCPU(CPUState* state) {
                 state->pc += 2;
         }  break; // JP adr; if positive (sign bit is 0), pc <- adr
         case 0xf3: UnimplementedInstruction(state);  break;
-        case 0xf4: UnimplementedInstruction(state);  break;
+        case 0xf4: call(state, !state->flags.s, opcode); break; // CP adr; if positive, call addr
         case 0xf5: {
             state->mem[state->sp-1] = state->a;
             uint8_t psw = (state->flags.c |
@@ -732,9 +780,18 @@ void EmulateCPU(CPUState* state) {
             state->mem[state->sp-2] = psw;
             state->sp -= 2;
         } break;
-        case 0xf6: UnimplementedInstruction(state);  break;
+        case 0xf6: {
+            state->a = state->a | opcode[1];
+            state->flags.z = state->a;
+            state->flags.p = parity(state->a, 8);
+            state->flags.s = ((state->a & 0x80) == 0x80);
+            state->flags.c = 0;
+            state->pc++;
+        }  break; // ORI d8; A = A | d8
         case 0xf7: UnimplementedInstruction(state); break;
-        case 0xf8: UnimplementedInstruction(state); break;
+        case 0xf8: {
+            ret(state, state->flags.s);
+        } break; // RM; if minus (s=1), return
         case 0xf9: UnimplementedInstruction(state); break;
         case 0xfa: {
             if (state->flags.s) // if sign flag is set
@@ -743,7 +800,9 @@ void EmulateCPU(CPUState* state) {
                 state->pc += 2;
         }  break; // JM adr; if flag s == 1, PC <- adr;
         case 0xfb: state->int_enable = 1; break;
-        case 0xfc: UnimplementedInstruction(state);  break;
+        case 0xfc: {
+            call(state, state->flags.s, opcode);
+        }  break; // CM adr; if M (sign bit = 1) call addr
         case 0xfe: {
             uint8_t diff = state->a - opcode[1];
             state->flags.c = (opcode[1] > state->a);
