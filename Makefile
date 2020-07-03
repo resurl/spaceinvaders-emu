@@ -4,4 +4,4 @@ TARGET=main.c
 OBJS=main.c cpu.c disassembler.c 
 
 build: main.c
-	$(CC) -o 8080 $(OBJS) $(LIBS)
+	$(CC) -o cpu $(OBJS) $(LIBS)
