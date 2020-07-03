@@ -2,32 +2,9 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "disassembler.h"
+#include "cpu.h"
 
 #define FOR_CPUDIAG
-
-typedef struct FlagRegister {
-    uint8_t c:1;        // carry flag 
-    uint8_t p:1;        // parity flag 
-    uint8_t ac:1;       // auxillary carry flag
-    uint8_t z:1;        // zero flag
-    uint8_t s:1;        // sign flag
-    uint8_t pad:3;
-} FlagRegister;
-
-typedef struct CPUState {
-    uint8_t b;          // registers 0..6
-    uint8_t c;
-    uint8_t d;
-    uint8_t e;
-    uint8_t h;
-    uint8_t l;
-    uint8_t a;          // accumulator
-    uint16_t pc;        // special registers
-    uint16_t sp;
-    uint8_t *mem;       // arr of bytes
-    struct FlagRegister flags;
-    uint8_t int_enable; // ??
-} CPUState;
 
 uint8_t parity(int x, int size) {
     int par = 0;
@@ -513,11 +490,11 @@ void EmulateCPU(CPUState* state) {
         }  break;
         case 0x97: sub(state, state->a); break; // SUB A; A <- A - A
         case 0x98: sbb(state, state->b); break; // SBB B
-        case 0x99: sbb(state, state->c);  break; // SBB C
-        case 0x9a: sbb(state, state->d);  break; // SBB D
-        case 0x9b: sbb(state, state->e);  break; // SBB E
-        case 0x9c: sbb(state, state->h);  break; // SBB H
-        case 0x9d: sbb(state, state->l);  break; // SBB L
+        case 0x99: sbb(state, state->c); break; // SBB C
+        case 0x9a: sbb(state, state->d); break; // SBB D
+        case 0x9b: sbb(state, state->e); break; // SBB E
+        case 0x9c: sbb(state, state->h); break; // SBB H
+        case 0x9d: sbb(state, state->l); break; // SBB L
         case 0x9e: sbb(state, state->mem[hl(state)]); break; // SBB (HL)
         case 0x9f: sbb(state, state->a);  break; // SBB A
         case 0xa0: ana(state, state->b); break; // ANA B
@@ -529,19 +506,19 @@ void EmulateCPU(CPUState* state) {
         case 0xa6: ana(state, state->mem[hl(state)]);  break;
         case 0xa7: ana(state, state->a); break;
         case 0xa8: xra(state, state->b); break;
-        case 0xa9: xra(state, state->c);  break;
-        case 0xaa: xra(state, state->d);  break;
-        case 0xab: xra(state, state->e);  break;
-        case 0xac: xra(state, state->h);  break;
-        case 0xad: xra(state, state->l);  break; // XRA L; A <- A ^ L
-        case 0xae: xra(state, state->mem[hl(state)]);  break;
-        case 0xaf: xra(state, state->a);  break;
+        case 0xa9: xra(state, state->c); break;
+        case 0xaa: xra(state, state->d); break;
+        case 0xab: xra(state, state->e); break;
+        case 0xac: xra(state, state->h); break;
+        case 0xad: xra(state, state->l); break; // XRA L; A <- A ^ L
+        case 0xae: xra(state, state->mem[hl(state)]); break;
+        case 0xaf: xra(state, state->a); break;
         case 0xb0: ora(state, state->b); break;
-        case 0xb1: ora(state, state->c);  break;
-        case 0xb2: ora(state, state->d);  break;
-        case 0xb3: ora(state, state->e);  break;
-        case 0xb4: ora(state, state->h);  break;
-        case 0xb5: ora(state, state->l);  break; // ORA L; A <- A | L
+        case 0xb1: ora(state, state->c); break;
+        case 0xb2: ora(state, state->d); break;
+        case 0xb3: ora(state, state->e); break;
+        case 0xb4: ora(state, state->h); break;
+        case 0xb5: ora(state, state->l); break; // ORA L; A <- A | L
         case 0xb6: {
             uint16_t addr = state->h << 8 | state->l;
             state->a = state->a | state->mem[addr];
@@ -628,10 +605,6 @@ void EmulateCPU(CPUState* state) {
         #endif    
         {
             call(state, 1, opcode);
-            /* state->mem[state->sp-1] = ((state->pc+2) & 0xff00) >> 8;
-            state->mem[state->sp-2] = (state->pc+2) & 0xff;
-            state->sp -=2;
-            state->pc = opcode[2] << 8 | opcode[1]; */
         }  break;   // CALL addr
         case 0xce: { 
             uint16_t sum = state->a + opcode[1] + state->flags.c;
@@ -846,53 +819,4 @@ void EmulateCPU(CPUState* state) {
     printRegs(state, psw);
     printFlags(state);
     printf("\n");
-}
-
-
-
-CPUState* initializeCPU() {
-    CPUState* cpu = (CPUState*) calloc(1,sizeof(CPUState));
-    cpu->mem = malloc(0x10000); // 64KB memory
-    return cpu;
-}
-
-void loadFile(CPUState* state, char* file, uint32_t pos) {
-    FILE *fp = fopen(file, "rb");
-    if (fp == NULL) {
-        printf("Error: Invalid file %s", file);
-        exit(1);
-    }
-
-    fseek(fp,0L,SEEK_END);
-    int fsize = ftell(fp);
-    fseek(fp,0L,SEEK_SET);
-
-    fread(&state->mem[pos],1,fsize, fp);
-
-    fclose(fp);
-}
-
-int main(int argc, char** argv) {
-    int done = 0;
-    CPUState* CPU = initializeCPU();
-    
-    /*
-    loadFile(CPU, "./rom/invaders.h", 0x0000);
-    loadFile(CPU, "./rom/invaders.g", 0x0800);
-    loadFile(CPU, "./rom/invaders.f", 0x1000);
-    loadFile(CPU, "./rom/invaders.e", 0x1800); 
-    */
-
-    // for testing 
-    loadFile(CPU, "./rom/cpudiag.bin", 0x0100);
-    CPU->pc = 0x100;        // testing starts at 0x100
-    CPU->mem[368] = 0x7;    // fixing bug in asm
-    CPU->mem[0x59c] = 0xc3; // JMP to skip over DAA/ac test
-    CPU->mem[0x59d] = 0xc2;
-    CPU->mem[0x59e] = 0x05;
-
-    while (done == 0)
-        EmulateCPU(CPU);
-
-    return 0;
 }
