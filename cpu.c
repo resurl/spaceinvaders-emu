@@ -6,6 +6,18 @@
 
 #define FOR_CPUDIAG
 
+void push(CPUState* state, uint16_t regval) {
+    state->mem[state->sp-2] = regval & 0xff;
+    state->mem[state->sp-1] = regval >> 8;
+    state->sp -=2;
+}
+
+void generateInterrupt(CPUState* state, uint16_t addr) {
+    push(state, state->pc);
+    state->pc = addr;
+    state->int_enable = 0;
+}
+
 uint8_t parity(int x, int size) {
     int par = 0;
     x = (x & (1<<size)-1); // truncates num to desired length
